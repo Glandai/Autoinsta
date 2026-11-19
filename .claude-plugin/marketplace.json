@@ -1,0 +1,14 @@
+{
+  "name": "atelier-photo",
+  "description": "Plugins Claude pour le studio photo",
+  "owner": {
+    "name": "Atelier photo"
+  },
+  "plugins": [
+    {
+      "name": "studio-instagram",
+      "source": "./plugins/studio-instagram",
+      "description": "Idées de posts chaque matin, post complet à valider d'un geste, publication Instagram au créneau."
+    }
+  ]
+}

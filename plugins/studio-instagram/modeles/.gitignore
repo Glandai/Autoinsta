@@ -1,0 +1,13 @@
+# Données personnelles et secrets : jamais dans un dépôt ni un partage
+.env
+.venv/
+outils/cloudflared
+catalogue/*
+jours/*
+donnees/*
+memoire/performance.md
+__pycache__/
+*.pyc
+!catalogue/.gitkeep
+!jours/.gitkeep
+!donnees/.gitkeep

@@ -1,0 +1,10 @@
+#!/bin/bash
+# Point d'entrée unique du studio :  ./studio <commande>   (./studio sans argument = aide)
+# Ce fichier vit dans le dossier de travail (~/Studio-Instagram) ; il est copié par le plugin.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY="$DIR/.venv/bin/python"
+if [ ! -x "$PY" ]; then
+  echo '{"erreur": "Le studio n'"'"'est pas installé dans ce dossier : dans Claude, lance /studio-instagram:studio-installation."}'
+  exit 3
+fi
+cd "$DIR" && exec "$PY" -m moteur "$@"

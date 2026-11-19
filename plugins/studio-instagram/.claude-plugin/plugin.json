@@ -1,0 +1,11 @@
+{
+  "name": "studio-instagram",
+  "displayName": "Studio Instagram",
+  "version": "1.1.0",
+  "description": "Directeur artistique Instagram pour photographe de mariage : chaque matin des idées tirées des galeries Pic-Time, puis le post complet (photos, mise en page 4:5, légende, musique) publié après validation.",
+  "author": {
+    "name": "Studio Instagram"
+  },
+  "license": "UNLICENSED",
+  "keywords": ["instagram", "photographie", "mariage", "pic-time", "publication", "reels"]
+}

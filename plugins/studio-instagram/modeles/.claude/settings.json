@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./studio:*)",
+      "Edit(./jours/**)",
+      "Edit(./memoire/**)",
+      "Edit(./catalogue/**)",
+      "Edit(./donnees/**)",
+      "Edit(./config/galeries.yaml)",
+      "Edit(./config/compte.yaml)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Edit(./.env)",
+      "Bash(cat .env:*)"
+    ]
+  }
+}

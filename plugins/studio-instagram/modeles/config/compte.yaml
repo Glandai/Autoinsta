@@ -1,0 +1,57 @@
+# Paramètres du compte (section 0 du prompt).
+# Pré-rempli à partir du profil public : Gabriella relit et corrige.
+# Tant qu'un champ contient [À COMPLÉTER], le studio le signale dans ses alertes.
+
+nom: "Gabriella Feyer"
+compte_instagram: "gabriellafeyer.photo"
+localisation: "Basée à Nîmes. Provence, Côte d'Azur, Occitanie, mariages à destination en Europe (à confirmer)"
+voix: "[À COMPLÉTER : je ou nous]"
+langue: "[À COMPLÉTER : francais, anglais, ou bilingue (français puis anglais)]"
+fuseau: "Europe/Paris"
+
+approche: |
+  [À COMPLÉTER par Gabriella, en quelques phrases : sa manière de travailler, argentique
+  et/ou numérique, son rapport aux mariés, ce qui distingue son travail.
+  C'est la seule source autorisée pour parler de sa pratique.]
+  Repères publics à confirmer ou réécrire : « Artful | Documentary | Editorial »,
+  « Digital + Film », photographier les moments « tels qu'ils sont », « loin des poses forcées ».
+
+# 2 ou 3 vraies légendes au bon ton (facultatif mais très utile)
+exemples_de_legendes: []
+
+publication:
+  # Un post par jour, comme demandé. Le prompt d'origine en prévoyait deux par semaine :
+  # pour ralentir, supprime des jours. Heures à ajuster d'après les statistiques.
+  creneaux:
+    lundi: "18:30"
+    mardi: "18:30"
+    mercredi: "18:30"
+    jeudi: "18:30"
+    vendredi: "12:30"
+    samedi: "10:00"
+    dimanche: "19:00"
+  part_reels: 0.25            # environ une publication sur quatre
+  hebergement: tunnel         # tunnel (cloudflared, sans compte) ou supabase
+  bucket_supabase: instagram-temp
+
+routine:
+  heure_idees: "08:00"        # heure de la tâche planifiée du matin
+  nombre_idees: 3
+  idees_exploration: 1        # dont une idée « exploration » pour continuer d'apprendre
+
+instagram:
+  api: facebook               # facebook (musique Instagram sur les Reels) ou instagram (plus simple)
+  version_api: v25.0
+
+mise_en_page:
+  marge_px: 64
+  fonds:                      # couleurs des fonds pour la présentation « marges »
+    clair: "#f6f2ec"
+    sombre: "#141412"
+    papier: "#efe6da"
+
+interface:
+  artifact: false             # true : publie aussi les pages en Artifact privé (pour les voir sur téléphone)
+
+comptes_autorises: []         # comptes toujours citables en plus des prestataires des séries
+images_deja_publiees: []      # identifiants de photos à ne jamais reprendre

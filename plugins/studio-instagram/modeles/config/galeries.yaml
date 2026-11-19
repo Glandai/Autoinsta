@@ -1,0 +1,30 @@
+# Une « série » = une galerie : un mariage, un shooting, un éditorial.
+# Le studio ne raconte QUE ce qui est écrit ici (lieux, prestataires, anecdotes).
+# Pour en ajouter une, écris /studio-galerie dans Claude : le studio pose les questions.
+
+series: []
+
+# Modèle à recopier :
+#
+# - id: mas-exemple-2026                # identifiant court, sans espace ni accent
+#   type: mariage                       # mariage | shooting | editorial
+#   lieu: "Mas d'Exemple, Uzès, France"
+#   date: 2026-06-14
+#   maries:
+#     prenoms: "Léa & Hugo"             # ou null
+#     prenoms_publiables: false         # true seulement avec leur accord
+#   notes: >
+#     Contexte et anecdotes racontés par Gabriella : la seule matière autorisée pour un récit.
+#   prestataires:
+#     - {role: "Organisation", nom: "Nom de l'agence", compte: "compte_sans_arobase"}
+#     - {role: "Fleurs", nom: "Nom du fleuriste", compte: null}
+#   location_id: null                   # identifiant de lieu Facebook (facultatif)
+#   source:
+#     type: pictime                     # pictime | dossier
+#     url: "https://gabriellafeyerphoto.pic-time.com/client/xxxx/gallery?sectoken2=..."
+#     # ou bien :
+#     # type: dossier
+#     # chemin: "~/Pictures/Exports/mas-exemple"
+#   exports_hd: null                    # dossier d'exports pleine définition (facultatif)
+#   consignes: ""                       # thème, priorité, disponibilités à mentionner
+#   statut: active                      # active | pause | epuisee
