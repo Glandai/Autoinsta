@@ -2,17 +2,22 @@
   "permissions": {
     "allow": [
       "Bash(./studio:*)",
+      "Bash(bash app/construire.sh:*)",
       "Edit(./jours/**)",
       "Edit(./memoire/**)",
       "Edit(./catalogue/**)",
       "Edit(./donnees/**)",
       "Edit(./config/galeries.yaml)",
-      "Edit(./config/compte.yaml)"
+      "Edit(./config/compte.yaml)",
+      "Edit(./config/app.yaml)",
+      "Edit(./config/charte.md)",
+      "Edit(./app/**)"
     ],
     "deny": [
       "Read(./.env)",
       "Edit(./.env)",
-      "Bash(cat .env:*)"
+      "Bash(cat .env:*)",
+      "Edit(./.plugin/**)"
     ]
   }
 }

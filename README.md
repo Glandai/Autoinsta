@@ -1,21 +1,24 @@
 # Catalogue « atelier-photo » : plugin Studio Instagram
 
-Ce dossier est un catalogue de plugins Claude (une « marketplace ») qui contient un seul plugin : **studio-instagram**, le studio de publication Instagram pour photographe de mariage. Le plugin ne contient ni photo, ni jeton, ni donnée personnelle : seulement les skills, le moteur, la charte, la documentation et des modèles de réglages pré-remplis à partir du profil public.
+Ce dossier est un catalogue de plugins Claude (une « marketplace ») qui contient un seul plugin : **studio-instagram**, le studio de publication Instagram pour photographe de mariage. Depuis la version 2.0, il installe aussi une app Mac, **Studio Instagram**, qui fait travailler Claude en arrière-plan et laisse le Mac tenir les horaires. Le plugin ne contient ni photo, ni jeton, ni donnée personnelle : seulement les skills, le moteur, les sources de l'app, la charte, la documentation et des modèles de réglages pré-remplis à partir du profil public.
 
 ```
 plugin-studio-instagram/
 ├── .claude-plugin/marketplace.json      le catalogue
 └── plugins/studio-instagram/            le plugin
     ├── .claude-plugin/plugin.json
-    ├── skills/                          6 skills
+    ├── skills/                          7 skills
+    ├── app/                             sources de l'app Mac (SwiftUI) et son architecture
     ├── moteur/  studio  installer.sh    le moteur et son installateur
     ├── prompt/  docs/  modeles/         la charte, les guides, les modèles de réglages
     └── README.md  METHODE.md
 ```
 
-## Installer sur un autre Mac, avec un autre compte Claude
+## Ce qu'il faut
 
-Il faut l'application Claude pour Mac, connectée au compte Claude de la photographe, avec un abonnement qui inclut Claude Code (onglet Code).
+Un Mac (macOS 14 ou plus récent) avec l'application Claude, connectée au compte Claude de la photographe, et un abonnement qui inclut Claude Code (onglet Code). Les outils de développement d'Apple (gratuits) servent à construire l'app : l'installation les demande s'ils manquent.
+
+## 1. Installer le plugin
 
 ### Option 1 : la plus simple, sans GitHub
 
@@ -23,23 +26,24 @@ Il faut l'application Claude pour Mac, connectée au compte Claude de la photogr
 2. Dans le Finder : menu Aller, Aller au dossier…, tape `~/.claude/skills` (crée le dossier `skills` s'il n'existe pas).
 3. Glisse-y le dossier `plugins/studio-instagram` en entier.
 4. Quitte puis relance l'application Claude. Dans l'onglet Code, tape `/` : les commandes `/studio-instagram:…` apparaissent.
-5. Lance `/studio-instagram:studio-installation`.
 
 Pour une nouvelle version, remplace le dossier `~/.claude/skills/studio-instagram` par le nouveau et relance l'application.
 
 ### Option 2 : avec mises à jour, via GitHub
 
 1. Le catalogue est sur GitHub, dans le dépôt public `Glandai/Autoinsta` : aucun compte GitHub n'est nécessaire pour l'installer.
-2. Sur le Mac de la photographe, dans une session de l'onglet Code, ajoute le catalogue puis installe le plugin :
+2. Sur le Mac de la photographe, dans une session de l'onglet Code, ajoute le catalogue et installe le plugin en une étape :
    ```text
-   /plugin marketplace add Glandai/Autoinsta
+   /plugin install studio-instagram --marketplace Glandai/Autoinsta
    ```
-   Ensuite : bouton **+** à côté de la zone de saisie, **Add plugins** (ou **Plugins**, puis **Browse plugins**), choisis **studio-instagram**, portée « pour moi ».
+   Ou, à la souris : `/plugin marketplace add Glandai/Autoinsta`, puis bouton **+** à côté de la zone de saisie, **Add plugins** (ou **Plugins**, puis **Browse plugins**), choisis **studio-instagram**, portée « pour moi ».
    Depuis un terminal, c'est l'équivalent de :
    ```bash
-   claude plugin install studio-instagram --marketplace Glandai/Autoinsta
+   claude plugin marketplace add Glandai/Autoinsta
    ```
-3. Lance `/studio-instagram:studio-installation`.
+   ```bash
+   claude plugin install studio-instagram@atelier-photo
+   ```
 
 Pour publier une nouvelle version : augmente `version` dans `plugins/studio-instagram/.claude-plugin/plugin.json` (et dans `moteur/VERSION`), puis envoie les fichiers sur GitHub. Chez elle, la mise à jour se fait depuis l'onglet **Installed** du gestionnaire de plugins (**Update now**), ou automatiquement si la mise à jour automatique est activée pour ce catalogue.
 
@@ -47,9 +51,15 @@ Pour publier une nouvelle version : augmente `version` dans `plugins/studio-inst
 
 ```bash
 claude plugin marketplace add /chemin/vers/plugin-studio-instagram
+```
+
+```bash
 claude plugin install studio-instagram@atelier-photo
 ```
 
-## Après l'installation
+## 2. Installer le studio et l'app
 
-`/studio-instagram:studio-installation` crée le dossier de travail `~/Studio-Instagram` (réglages, photos analysées, posts, mémoire), installe le moteur, guide la connexion Instagram, ajoute les galeries et crée les tâches planifiées. Le détail est dans `plugins/studio-instagram/README.md`.
+- **Avec Claude (recommandé)** : dans l'onglet Code, `/studio-instagram:studio-installation`. Une trentaine de minutes, guidée : dossier de travail `~/Studio-Instagram`, app Mac dans `~/Applications`, connexion de Claude Code, paramètres du compte, Instagram, galeries, historique, planification du Mac (avec son accord). Venant de la version 1, la même commande met à jour le studio et met en pause les anciennes tâches planifiées de l'application Claude.
+- **En une commande**, dans le Terminal : `bash <dossier du plugin>/installer.sh` (par exemple `bash ~/.claude/skills/studio-instagram/installer.sh` avec l'option 1). Le studio et l'app sont prêts en quelques minutes ; l'app guide ensuite la connexion de Claude Code. Pour le compte, Instagram et les galeries, lancer ensuite `/studio-instagram:studio-installation`, qui reprend où on en est.
+
+Le détail (journée type, personnalisation de l'app, planification) est dans `plugins/studio-instagram/README.md` ; le dépannage dans `plugins/studio-instagram/docs/depannage.md`.

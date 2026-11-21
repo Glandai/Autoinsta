@@ -47,7 +47,7 @@ Le compte @gabriellafeyer.photo a déjà une Page Facebook (facebook.com/gabriel
    FB_APP_SECRET=clé secrète
    FB_SHORT_TOKEN=jeton copié dans l'Explorateur
    ```
-2. Enregistre, puis dis à Claude « c'est fait ». Il lance `./studio jeton echanger` : le jeton court devient un jeton de 60 jours, l'identifiant du compte Instagram est trouvé, et tout est rangé dans `.env`. `./studio jeton verifier` confirme la connexion.
+2. Enregistre, puis dis à Claude « c'est fait » (dans l'application Claude, ou dans le panneau « Demander à Claude » de l'app). Il lance `./studio jeton echanger` : le jeton court devient un jeton de 60 jours, l'identifiant du compte Instagram est trouvé, et tout est rangé dans `.env`. `./studio jeton verifier` confirme la connexion.
 
 ### Renouveler (tous les 60 jours)
 
@@ -60,7 +60,7 @@ Pour ne plus jamais renouveler : dans Meta Business Suite, Paramètres de l'entr
 1. Compte Instagram professionnel (voir plus haut). Pas besoin de Page Facebook.
 2. developers.facebook.com, « Créer une app », cas d'utilisation **gérer les messages et le contenu sur Instagram**.
 3. Dans « Configuration de l'API avec connexion Instagram », ajoute ton compte et **génère un jeton** (connexion Instagram). Copie-le.
-4. Dans `.env` : `IG_ACCESS_TOKEN=le jeton`. Dans `config/compte.yaml` : `instagram.api: instagram`.
+4. Dans `.env` : `IG_ACCESS_TOKEN=le jeton`. Dans les Réglages de l'app (ou `config/compte.yaml`) : route `instagram` (`instagram.api: instagram`).
 5. « C'est fait » : Claude lance `./studio jeton echanger` (identifiant du compte) puis `./studio jeton verifier`. Le studio renouvelle ensuite le jeton tout seul.
 
 ## L'adresse temporaire au moment de publier
@@ -70,11 +70,11 @@ Instagram ne reçoit pas les photos directement : il vient les chercher à une a
 Si cela échoue chez toi (réseau d'entreprise, pare-feu), utilise Supabase (gratuit) :
 1. Crée un projet sur supabase.com, puis dans Storage un bucket **public** nommé `instagram-temp`.
 2. Dans Paramètres, API : copie l'URL du projet et la clé `service_role` dans `.env` (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`).
-3. Dans `config/compte.yaml` : `publication.hebergement: supabase`.
+3. Dans les Réglages de l'app (ou `config/compte.yaml`) : hébergement `supabase` (`publication.hebergement: supabase`).
 Les fichiers sont supprimés juste après la publication.
 
 ## Ce que l'API ne fait pas
 
 - Ajouter de la musique à un carrousel : impossible par l'API. Le studio te propose un titre ; tu l'ajoutes en 15 secondes après publication (sur le post : ••• puis Modifier, puis Ajouter de la musique). Selon le type de compte, la bibliothèque proposée peut être plus réduite (comptes Entreprise).
-- Programmer un post chez Instagram : le studio publie lui-même à l'heure du créneau, à condition que le Mac soit allumé et l'application Claude ouverte.
+- Programmer un post chez Instagram : le studio publie lui-même à l'heure du créneau, grâce à la planification du Mac (activée dans les Réglages de l'app), à condition que le Mac soit allumé et la session ouverte.
 - Identifier un lieu sans son identifiant Facebook : le champ `location_id` d'une série reste facultatif.

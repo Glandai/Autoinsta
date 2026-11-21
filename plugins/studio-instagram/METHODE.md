@@ -1,23 +1,28 @@
 # La méthode du Studio Instagram
 
-Ce document explique comment le studio fonctionne et pourquoi il est construit ainsi. Il est livré sous forme de plugin Claude (`studio-instagram`) : le plugin apporte les skills, le moteur et la charte ; un dossier de travail (`~/Studio-Instagram`) garde les réglages et les données de la photographe. Pour installer, voir le `README.md` du plugin.
+Ce document explique comment le studio fonctionne et pourquoi il est construit ainsi (version 2.0). Il est livré sous forme de plugin Claude (`studio-instagram`) : le plugin apporte les skills, le moteur, la charte et les sources de l'app Mac ; un dossier de travail (`~/Studio-Instagram`) garde les réglages, les données et l'app personnalisée de la photographe. Pour installer, voir le `README.md` du plugin ; l'architecture de l'app est décrite dans `app/ARCHITECTURE.md`.
 
 ## 1. Le principe
 
-Claude fait le travail de jugement : regarder les photos, imaginer les idées, construire la séquence, écrire la légende, apprendre des goûts et des résultats. Des scripts font tout ce qui doit être exact et identique à chaque fois : lire Pic-Time, mesurer les images, recadrer en 4:5, contrôler les règles du prompt, publier par l'API, relever les statistiques. La photographe garde une seule décision par étape, prise en un geste.
+Claude fait le travail de jugement : regarder les photos, imaginer les idées, construire la séquence, écrire la légende, apprendre des goûts et des résultats. Des scripts font tout ce qui doit être exact et identique à chaque fois : lire Pic-Time, mesurer les images, recadrer en 4:5, contrôler les règles du prompt, publier par l'API, relever les statistiques. La photographe garde une seule décision par étape, prise d'un clic dans l'app Studio Instagram.
 
 ```
-08:00  tâche « matin »      statistiques → apprentissages → galeries → 3 idées ──┐
-                                                                                  │ notification
+08:00  le Mac (launchd)     lance Claude sans fenêtre : statistiques → apprentissages
+                            → galeries → 3 idées ─────────────────────────────────┐
+                                                                                  │ l'app s'ouvre
        la photographe       choisit une idée, ou écrit la sienne  ◄───────────────┘
-                                                                                  
-       Claude               photos → séquence → mise en page → légende → musique
-                            → contrôle automatique → aperçu ─────────────────────┐ notification
+       l'app                relance Claude : photos → séquence → mise en page
+                            → légende → musique → contrôle → aperçu ─────────────┐ l'app s'ouvre
        la photographe       « Publier à 18:30 » · « Publier maintenant »  ◄──────┘
-                            · « Changer quelque chose » · « Reporter »
-18:30  tâche « publication » publie le post validé → lien envoyé
-dim.   tâche « bilan »      réécrit les apprentissages, propose des expériences
+                            · « Reporter » · une retouche écrite (Claude la fait)
+18:30  le Mac               publie le post validé (sans Claude) → notification
+dim.   le Mac               lance le bilan : apprentissages, expériences proposées
 ```
+
+Trois acteurs, une seule source de vérité :
+- **l'app** (SwiftUI) affiche et recueille les décisions ; elle n'écrit jamais elle-même dans le dossier du studio, elle appelle `./studio …` et lit du JSON ;
+- **le moteur** (`./studio`, Python) applique les décisions avec les mêmes contrôles, que la demande vienne de l'app ou de Claude ;
+- **Claude Code** travaille sans fenêtre, lancé par l'app ou par le Mac ; l'app montre son avancement en direct (« Je regarde les photos », « J'écris la légende ») et son résumé final.
 
 ## 2. Analyse du prompt d'origine
 
@@ -63,13 +68,21 @@ Si Pic-Time change son format interne, le script échoue proprement et la source
 - **Musique** : l'API Audio officielle cherche une piste dans la bibliothèque Instagram et l'attache au Reel au moment de publier. Pour un carrousel, l'API ne le permet pas : le studio propose un titre, ajouté dans l'app après publication (possible depuis juillet 2026).
 - **Contrôle final** : le script `valider` vérifie le point 12 du prompt et les limites de l'API. Une erreur bloque la validation ; un avertissement s'affiche dans l'aperçu.
 
-## 5. L'interface
+## 5. L'interface : l'app Mac Studio Instagram
 
-L'interface est l'application Claude elle-même, sur Mac et sur téléphone avec le Contrôle à distance :
-- **Idées du matin** : une page avec trois cartes (couverture envisagée, vignettes, format, pilier, raison). Le choix se fait par une carte de question : trois boutons et un champ libre pour proposer son idée.
-- **Aperçu** : une page qui imite le post Instagram (carrousel qu'on fait défiler, légende avec « plus », musique, collaborateurs, lieu). On y voit aussi la grille du profil avec la nouvelle couverture, les points à vérifier, l'intention, la séquence et les textes alternatifs. Quatre boutons : publier au créneau, publier maintenant, changer quelque chose, reporter.
-- **Notifications** : idées prêtes, post prêt, post publié avec son lien, rappel si un post attend.
-- Les pages sont des fichiers HTML autonomes, avec les images intégrées. On peut les publier en Artifact privé pour les ouvrir sur téléphone.
+L'app est construite sur le Mac à l'installation, avec les seuls outils de développement d'Apple. La photographe ne change jamais de fenêtre : l'app lance Claude, montre ce qu'il fait, et s'ouvre toute seule quand une décision l'attend.
+- **Aujourd'hui** : où en est le post du jour, ce que Claude est en train de faire, ce qui l'attend.
+- **Idées** : trois cartes (couverture envisagée, vignettes, format, pilier, raison) ; un clic pour choisir, ou un champ pour proposer son idée.
+- **Aperçu** : le post tel qu'il apparaîtra (carrousel qu'on fait défiler, légende, musique, collaborateurs, lieu), la grille du profil avec la nouvelle couverture, les points à vérifier ; « Publier à HH:MM », « Publier maintenant », « Reporter » et un champ de retouche.
+- **Galeries, Statistiques, Réglages, Charte, Règles** : tout se règle dans l'app, sans fichier à ouvrir.
+- **Demander à Claude** : un panneau pour lui écrire librement (« ajoute le mariage de samedi », « change la couleur de l'app ») ; la conversation continue jusqu'à « Nouvelle conversation ».
+- **Notifications du Mac** : idées prêtes, bilan prêt, post publié, publication à reprendre.
+
+**Connexion de Claude.** L'app cherche Claude Code sur le Mac (y compris la copie livrée avec l'application Claude). S'il manque, elle propose de l'installer ; s'il n'est pas connecté, elle ouvre la page de connexion d'Anthropic dans le navigateur. Aucun mot de passe ne passe par l'app.
+
+**Apparence et personnalisation.** Couleurs, mode clair ou sombre, titres, densité, animations et écrans visibles sont dans `config/app.yaml` : l'app se met à jour dès que le fichier change. Pour aller plus loin (mise en page, fonctionnement), Claude modifie les sources de l'app de ce studio (`app/Sources`), la reconstruit, la rouvre et note le changement dans `app/PERSONNALISATIONS.md`. Si la compilation échoue, il revient en arrière : l'app installée n'est remplacée qu'après une construction réussie. À chaque mise à jour du plugin, un fichier jamais modifié suit la nouvelle version ; un fichier personnalisé est gardé, et signalé s'il a aussi changé dans le plugin, pour que Claude aide à fusionner.
+
+**Sans app** (outils de développement absents), les idées et l'aperçu restent disponibles en pages HTML dans l'application Claude, avec des cartes de question.
 
 ## 6. Apprendre
 
@@ -82,9 +95,10 @@ Trois sources, par ordre de priorité : **identité** (le prompt, non négociabl
 ## 7. Outils : ce qui est utilisé, et pourquoi pas le reste
 
 **Utilisés**
-- Application Claude (onglet Code) : plugin `studio-instagram` avec 6 skills (`studio-installation`, `studio-matin`, `studio-creation`, `studio-publication`, `studio-bilan`, `studio-galerie`), et un dossier de travail avec son `CLAUDE.md`.
-- Tâches planifiées de l'application : matin, publication, bilan.
-- Cartes de question, affichage de pages, notifications, Contrôle à distance (téléphone), Artifacts privés (facultatif).
+- Claude Code, lancé sans fenêtre par l'app ou par le Mac (`claude -p`), avec la copie du plugin du studio : 7 skills (`studio-installation`, `studio-matin`, `studio-creation`, `studio-publication`, `studio-bilan`, `studio-galerie`, `studio-app`) et le `CLAUDE.md` du dossier de travail. Dans ce mode, Claude n'a droit qu'aux commandes du studio et aux fichiers du studio (jamais `.env`).
+- L'app Mac Studio Instagram (SwiftUI, compilée sur place avec `swiftc`, sans Xcode).
+- La planification de macOS (launchd) : trois tâches (matin, publication, bilan) qui tournent même quand l'app et l'application Claude sont fermées.
+- L'application Claude (onglet Code) pour l'installation, les mises à jour et les longues conversations ; cartes de question, affichage de pages, Contrôle à distance (téléphone), Artifacts privés (facultatif).
 - Vision de Claude : planches contact, photos, rendus.
 - API Graph officielle de Meta : publication, statistiques, API Audio.
 - Python (Pillow, requests, PyYAML, imageio-ffmpeg), Cloudflare Quick Tunnel ou Supabase pour l'adresse temporaire.
@@ -96,12 +110,15 @@ Trois sources, par ordre de priorité : **identité** (le prompt, non négociabl
 - Modèles d'esthétique (Hugging Face) : ils notent une beauté générique, pas l'identité du compte. Claude, guidé par la charte, juge mieux.
 - Zapier pour Pic-Time : il ne donne accès ni aux photos ni aux galeries existantes.
 - Skills génériques de contenu et de marketing : les calendriers de contenu standard sont remplacés par la charte sur mesure.
-- Routines dans le cloud : elles demandent GitHub et des secrets dans le cloud, n'ont pas de fichiers locaux et ne permettent pas le choix interactif. Les tâches planifiées locales sont plus simples.
+- Routines dans le cloud : elles demandent GitHub et des secrets dans le cloud, n'ont pas de fichiers locaux et ne permettent pas le choix interactif.
+- Tâches planifiées de l'application Claude (version 1) : elles demandaient que l'application reste ouverte et passaient par une conversation. La planification du Mac les remplace ; les anciennes tâches sont mises en pause à l'installation de la 2.0, pour éviter les doublons.
 - Gmail, Google Drive, Google Agenda : facultatifs. Un dossier Drive synchronisé peut servir de source ; un résumé par e-mail pourrait remplacer les notifications.
 
 ## 8. Sécurité et limites
 
-- Rien n'est publié sans validation explicite dans la conversation. La tâche de publication ne publie que les posts au statut « approuve ».
-- Les secrets restent dans `.env` : Claude a l'interdiction de lire ce fichier (règle dans `.claude/settings.json`), et la photographe y colle ses jetons elle-même.
+- Rien n'est publié sans validation explicite : son clic dans l'app, ou sa réponse dans une conversation avec Claude. Lancé par l'app ou par le Mac, Claude ne peut ni approuver ni publier ; la tâche de publication du Mac ne publie que les posts au statut « approuve », sans Claude.
+- Les secrets restent dans `.env` : Claude a l'interdiction de lire ce fichier (règle dans `.claude/settings.json`), et la photographe y colle ses jetons elle-même. La connexion de Claude se fait dans le navigateur, sur la page d'Anthropic.
+- Lancé sans fenêtre, Claude n'a droit qu'aux commandes du studio, à la reconstruction de l'app et aux fichiers du studio ; la copie du plugin (`.plugin/`) lui est interdite en écriture.
+- Une personnalisation de l'app ne peut pas contourner ces règles, et une app qui ne compile plus est remise comme avant.
 - Les photos restent en local. Seules les images du post validé sont exposées, quelques minutes, à une adresse aléatoire.
-- Limites connues : pas de musique par l'API sur les carrousels ; jeton de 60 jours à renouveler en route Facebook, sauf avec un utilisateur système ; format Pic-Time interne susceptible de changer ; l'application Claude doit être ouverte et le Mac allumé aux heures des tâches.
+- Limites connues : pas de musique par l'API sur les carrousels ; jeton de 60 jours à renouveler en route Facebook, sauf avec un utilisateur système ; format Pic-Time interne susceptible de changer ; le Mac doit être allumé, session ouverte, aux heures des tâches ; le Claude de l'app partage les limites d'utilisation de l'abonnement.

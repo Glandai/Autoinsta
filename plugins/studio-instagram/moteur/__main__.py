@@ -153,6 +153,7 @@ def main(argv=None):
     a.add_argument("--simulation", action="store_true")
     a = sp.add_parser("publier-dus", help="publier tout ce qui est approuvé et dont l'heure est passée")
     a.add_argument("--simulation", action="store_true")
+    a.add_argument("--auto", action="store_true", help="lancé par la planification : notifications macOS")
     sp.add_parser("en-attente", help="brouillons pas encore validés")
 
     sp.add_parser("releve", help="relever les statistiques Instagram")
@@ -164,6 +165,34 @@ def main(argv=None):
     a = sp.add_parser("jeton", help="jeton Instagram")
     a.add_argument("action", choices=["verifier", "renouveler", "echanger"])
     sp.add_parser("demo", help="démonstration hors ligne de toute la chaîne")
+    a = sp.add_parser("ui", help="ouvrir l'app Studio Instagram sur un écran (et attendre la décision)")
+    a.add_argument("ecran")
+    a.add_argument("--jour")
+    a.add_argument("--attendre", action="store_true")
+    a.add_argument("--delai", type=float)
+    a.add_argument("--forcer", action="store_true", help="passer au premier plan même si l'ouverture automatique est désactivée")
+    a = sp.add_parser("app", help="échanges avec l'app Studio Instagram (JSON)")
+    a.add_argument("action")
+    a.add_argument("arguments", nargs="*")
+    sp.add_parser("taches", help="(1.x) tâches planifiées de l'app Claude demandées par les réglages")
+    a = sp.add_parser("claude", help="Claude Code sans fenêtre : statut, connexion, exécutions")
+    a.add_argument("action", choices=["statut", "installer", "connecter", "code", "deconnecter", "lancer", "executer",
+                                      "etat", "annuler", "historique", "nouvelle-conversation"])
+    a.add_argument("cible", nargs="?", help="tâche à lancer (matin, creation, retouche, galerie, bilan, demande) "
+                                            "ou identifiant d'exécution")
+    a.add_argument("--jour")
+    a.add_argument("--serie")
+    a.add_argument("--consigne")
+    a.add_argument("--id")
+    a.add_argument("--console", action="store_true", help="connexion par la Console Anthropic (facturation API)")
+    a.add_argument("--attendre", action="store_true")
+    a.add_argument("--auto", action="store_true")
+    a = sp.add_parser("planifier", help="tâches automatiques du Mac (launchd)")
+    g = a.add_mutually_exclusive_group()
+    g.add_argument("--etat", action="store_true")
+    g.add_argument("--activer", action="store_true")
+    g.add_argument("--desactiver", action="store_true")
+    g.add_argument("--appliquer", action="store_true")
 
     args = p.parse_args(argv)
     if not args.cmd:
@@ -173,6 +202,9 @@ def main(argv=None):
         return executer(args) or 0
     except ErreurStudio as e:
         sortie({"erreur": str(e)})
+        return 2
+    except Exception as e:  # l'app attend toujours une réponse JSON
+        sortie({"erreur": f"Erreur interne ({e.__class__.__name__}) : {e}"})
         return 2
 
 
@@ -257,7 +289,16 @@ def executer(args):
         return sortie(publication.publier(args.jour, simulation=args.simulation))
     if c == "publier-dus":
         from . import publication
-        return sortie(publication.publier_dus(simulation=args.simulation))
+        if not args.auto:
+            return sortie(publication.publier_dus(simulation=args.simulation))
+        from . import planification
+        try:
+            r = publication.publier_dus(simulation=args.simulation)
+        except Exception as e:
+            planification.notifier_echec_publication(e)
+            raise
+        planification.notifier_publications(r if isinstance(r, list) else (r or {}).get("resultats"))
+        return sortie(r)
     if c == "en-attente":
         from . import journee
         return sortie(journee.en_attente())
@@ -290,6 +331,100 @@ def executer(args):
     if c == "demo":
         from . import demo
         return sortie(demo.lancer())
+    if c == "ui":
+        from . import app
+        jour = args.jour or config.aujourdhui()
+        r = app.ouvrir(args.ecran, jour, forcer=args.forcer)
+        if not args.attendre:
+            return sortie(r)
+        if r["etat"] == "app_absente":
+            sortie(r)
+            return 4
+        return sortie({"ouverture": r, "decision": app.attendre(jour, args.delai)})
+    if c == "taches":
+        from . import app
+        return sortie(app.taches())
+    if c == "claude":
+        from . import claude
+        a, cible = args.action, args.cible
+        if a == "statut":
+            return sortie(claude.statut())
+        if a == "installer":
+            return sortie(claude.installer())
+        if a == "connecter":
+            return sortie(claude.connecter(console=args.console))
+        if a == "code":
+            return sortie(claude.envoyer_code(cible or ""))
+        if a == "deconnecter":
+            return sortie(claude.deconnecter())
+        if a == "lancer":
+            if not cible:
+                raise ErreurStudio("Indique la tâche : matin, creation, retouche, galerie, bilan ou demande.")
+            r = claude.lancer(cible, jour=args.jour, serie=args.serie, consigne=args.consigne,
+                              attendre=args.attendre, auto=args.auto)
+            sortie(r)
+            return 0 if r.get("etat") in ("lance", "termine") else (4 if r.get("etat") in ("absent", "non_connecte") else 1)
+        if a == "executer":
+            return sortie(claude.executer(cible or args.id))
+        if a == "etat":
+            return sortie(claude.etat(args.id or cible))
+        if a == "annuler":
+            return sortie(claude.annuler())
+        if a == "historique":
+            return sortie(claude.historique())
+        return sortie(claude.nouvelle_conversation())
+    if c == "planifier":
+        from . import planification
+        if args.activer:
+            return sortie(planification.activer())
+        if args.desactiver:
+            return sortie(planification.desactiver())
+        if args.appliquer:
+            return sortie(planification.appliquer())
+        return sortie(planification.etat())
+    if c == "app":
+        from . import app, sources
+        x = args.arguments
+
+        def arg(i, nom):
+            if len(x) <= i:
+                raise ErreurStudio(f"Argument manquant : {nom}")
+            return x[i]
+
+        table = {
+            "jour": lambda: app.vue_jour(x[0] if x else None),
+            "jours": app.vue_jours,
+            "reglages": app.reglages,
+            "enregistrer-reglages": lambda: app.enregistrer_reglages(arg(0, "fichier")),
+            "galeries": app.galeries,
+            "enregistrer-galerie": lambda: app.enregistrer_galerie(arg(0, "fichier")),
+            "supprimer-galerie": lambda: app.supprimer_galerie(arg(0, "id")),
+            "indexer-galerie": lambda: sources.indexer(arg(0, "id")),
+            "charte": app.charte,
+            "enregistrer-charte": lambda: app.enregistrer_charte(arg(0, "fichier")),
+            "retablir-charte": app.retablir_charte,
+            "regles": app.regles_vue,
+            "enregistrer-regles": lambda: app.enregistrer_regles(arg(0, "fichier")),
+            "retablir-regles": app.retablir_regles,
+            "memoire": app.memoire,
+            "enregistrer-memoire": lambda: app.enregistrer_memoire(arg(0, "nom"), arg(1, "fichier")),
+            "sante": app.sante,
+            "decider": lambda: app.decider(arg(0, "jour"), arg(1, "action"), x[2] if len(x) > 2 else None),
+            "decision-traitee": lambda: app.decision_traitee(arg(0, "jour")),
+            "attente": lambda: {"claude_attend": app.claude_attend(arg(0, "jour"))},
+            "apparence": app.apparence,
+            "modifier-post": lambda: app.modifier_post(arg(0, "jour"), arg(1, "fichier")),
+            "candidats": lambda: app.candidats_galerie(arg(0, "serie")),
+            "instagram": app.instagram,
+            "enregistrer-instagram": lambda: app.enregistrer_instagram(arg(0, "fichier")),
+            "enregistrer-apparence": lambda: app.enregistrer_apparence(arg(0, "fichier")),
+            "retablir-apparence": app.retablir_apparence,
+            "synchroniser-sources": lambda: __import__("moteur.synchro", fromlist=["synchro"]).synchroniser_app(
+                arg(0, "dossier"), config.chemin("app")),
+        }
+        if args.action not in table:
+            raise ErreurStudio(f"Action inconnue pour l'app : {args.action}")
+        return sortie(table[args.action]())
     raise ErreurStudio(f"Commande inconnue : {c}")
 
 

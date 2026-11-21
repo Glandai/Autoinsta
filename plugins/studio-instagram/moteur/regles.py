@@ -52,11 +52,11 @@ COMMERCIAL_DOUTEUX = ["offre", "offres", "tarif", "tarifs", "disponibilites", "d
 INCITATIONS = ["dites-moi en commentaire", "dis-moi en commentaire", "en commentaire", "double tap",
                "team ", "enregistre ce post", "enregistrez ce post", "sauvegarde ce post",
                "tag someone", "identifie", "save this post", "comment below", "tell me in the comments"]
-MOTS_DU_PROMPT = r"\b(elegant|elegante|elegants|elegantes|elegance|intemporel|intemporelle|intemporels|" \
-                 r"intemporelles|editorial|editoriale|editoriales|editoriaux|authentique|authentiques|" \
-                 r"authenticite|luxe|luxueux|luxueuse|luxueuses|bold|sophistique|sophistiquee|" \
-                 r"sophistiques|sophistiquees|sophistication|timeless|authentic|authenticity|luxury|" \
-                 r"luxurious|sophisticated)\b"
+MOTS_DU_PROMPT = ["elegant", "elegante", "elegants", "elegantes", "elegance", "intemporel", "intemporelle",
+                  "intemporels", "intemporelles", "editorial", "editoriale", "editoriales", "editoriaux",
+                  "authentique", "authentiques", "authenticite", "luxe", "luxueux", "luxueuse", "luxueuses",
+                  "bold", "sophistique", "sophistiquee", "sophistiques", "sophistiquees", "sophistication",
+                  "timeless", "authentic", "authenticity", "luxury", "luxurious", "sophisticated"]
 TICS = [
     (r"[—–]", "tiret cadratin ou demi-cadratin"),
     (r"plus qu'un mariage|more than a wedding", "« plus qu'un mariage »"),
@@ -75,6 +75,32 @@ HASHTAGS_GENERIQUES = {
     "#amour", "#photo", "#weddings", "#bridetobe", "#engaged", "#weddingideas",
 }
 EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿️‍]")
+DEFAUTS = {
+    "legende": {
+        "cliches": CLICHES, "commercial": COMMERCIAL, "commercial_possible": COMMERCIAL_DOUTEUX,
+        "incitations": INCITATIONS, "mots_du_prompt": MOTS_DU_PROMPT, "superlatifs": SUPERLATIFS,
+        "hashtags_generiques": sorted(HASHTAGS_GENERIQUES),
+    },
+    "limites": {"legende_caracteres": 2200, "mentions": 20, "hashtags": 5, "collaborateurs": 3,
+                "medias_carrousel": 10, "carrousel_court": 6},
+    "alternance": {"pilier_consecutif_interdit": True, "serie_consecutive_interdite": True,
+                   "criteres_couverture_differents": 2, "meme_tonalite_max": 2, "meme_longueur_max": 2,
+                   "couple_max_sur_8": 3, "piliers_min_sur_10": 5},
+}
+
+
+def parametres() -> dict:
+    """Règles en vigueur : valeurs par défaut complétées par config/regles.yaml (modifiable dans l'app)."""
+    perso = config.lire_yaml("config/regles.yaml") or {}
+    res = {}
+    for section, valeurs in DEFAUTS.items():
+        res[section] = dict(valeurs)
+        for k, v in (perso.get(section) or {}).items():
+            if k in valeurs and v is not None:
+                res[section][k] = v
+    return res
+
+
 LIGNE_CREDIT = re.compile(r"^[^@#\n]{1,40}\s@[A-Za-z0-9._]{1,30}\s*$")
 HASHTAG = re.compile(r"#[^\s#@]+")
 MENTION = re.compile(r"@([A-Za-z0-9._]{1,30})")
@@ -113,22 +139,28 @@ def classer_longueur(corps: str) -> str:
 
 def analyser_legende(legende: str, longueur_declaree: str = None, langue: str = "fr") -> tuple:
     erreurs, avert = [], []
+    P = parametres()
+    L, lim = P["legende"], P["limites"]
     parts = decouper_legende(legende)
     corps = parts["corps"]
     bas = sans_accents(corps)
 
     def chercher(liste, libelle, niveau):
         for terme in liste:
-            if re.search(r"(?<![a-z])" + re.escape(terme.strip()) + r"(?![a-z])", bas):
-                niveau.append(f"{libelle} : « {terme.strip()} »")
+            t_norm = sans_accents(str(terme).strip())
+            if t_norm and re.search(r"(?<![a-z])" + re.escape(t_norm) + r"(?![a-z])", bas):
+                niveau.append(f"{libelle} : « {str(terme).strip()} »")
 
-    chercher(CLICHES, "Cliché interdit", erreurs)
-    chercher(COMMERCIAL, "Ton commercial", erreurs)
-    chercher(COMMERCIAL_DOUTEUX, "Mot commercial possible (seulement si prévu dans les consignes)", avert)
-    chercher(INCITATIONS, "Incitation artificielle", erreurs)
-    chercher(SUPERLATIFS, "Superlatif (préférer la retenue)", avert)
-    for m in sorted(set(re.findall(MOTS_DU_PROMPT, bas))):
-        erreurs.append(f"Mot du prompt écrit tel quel : « {m} » (le faire ressentir, pas l'écrire)")
+    chercher(L["cliches"], "Cliché interdit", erreurs)
+    chercher(L["commercial"], "Ton commercial", erreurs)
+    chercher(L["commercial_possible"], "Mot commercial possible (seulement si prévu dans les consignes)", avert)
+    chercher(L["incitations"], "Incitation artificielle", erreurs)
+    chercher(L["superlatifs"], "Superlatif (préférer la retenue)", avert)
+    mots = [sans_accents(str(m).strip()) for m in L["mots_du_prompt"] if str(m).strip()]
+    if mots:
+        motif_mots = r"\b(" + "|".join(re.escape(m) for m in mots) + r")\b"
+        for m in sorted(set(re.findall(motif_mots, bas))):
+            erreurs.append(f"Mot du prompt écrit tel quel : « {m} » (le faire ressentir, pas l'écrire)")
     for motif, libelle in TICS:
         if re.search(motif, bas if "[" not in motif else corps):
             erreurs.append(f"Tic d'écriture : {libelle}")
@@ -148,14 +180,15 @@ def analyser_legende(legende: str, longueur_declaree: str = None, langue: str = 
     capitales = [w for w in re.findall(r"\b[A-ZÀ-Ý]{4,}\b", corps)]
     if capitales:
         avert.append("Majuscules d'emphase : " + ", ".join(sorted(set(capitales))[:5]))
-    if len(legende) > MAX_LEGENDE:
-        erreurs.append(f"Légende trop longue : {len(legende)} caractères (max {MAX_LEGENDE})")
-    if len(parts["mentions"]) > MAX_MENTIONS:
-        erreurs.append(f"Trop de mentions @ : {len(parts['mentions'])} (max {MAX_MENTIONS})")
+    if len(legende) > int(lim["legende_caracteres"]):
+        erreurs.append(f"Légende trop longue : {len(legende)} caractères (max {lim['legende_caracteres']})")
+    if len(parts["mentions"]) > int(lim["mentions"]):
+        erreurs.append(f"Trop de mentions @ : {len(parts['mentions'])} (max {lim['mentions']})")
     tags = parts["tous_hashtags"]
-    if len(tags) > MAX_HASHTAGS:
-        erreurs.append(f"Trop de hashtags : {len(tags)} (max {MAX_HASHTAGS})")
-    generiques = [t for t in tags if t.lower() in HASHTAGS_GENERIQUES]
+    if len(tags) > int(lim["hashtags"]):
+        erreurs.append(f"Trop de hashtags : {len(tags)} (max {lim['hashtags']})")
+    interdits = {str(h).strip().lower() for h in L["hashtags_generiques"]}
+    generiques = [t for t in tags if t.lower() in interdits]
     if generiques:
         erreurs.append("Hashtags génériques : " + ", ".join(generiques))
     if len(tags) != len(parts["hashtags"]):
@@ -187,6 +220,7 @@ def creneau(jour_iso: str, cfg: dict = None):
 def etat_feed(hist: list = None, cfg: dict = None) -> dict:
     hist = config.historique() if hist is None else hist
     cfg = cfg or config.compte()
+    alt = parametres()["alternance"]
     derniers = hist[-9:]
     dernier = hist[-1] if hist else None
     c = {}
@@ -194,15 +228,19 @@ def etat_feed(hist: list = None, cfg: dict = None) -> dict:
         c["pilier_interdit"] = dernier.get("pilier")
         c["serie_interdite"] = dernier.get("serie")
         c["couverture_precedente"] = dernier.get("fiche_feed")
-        c["regle_couverture"] = "différer d'au moins 2 critères (tonalité, luminosité, plan, sujet)"
-    tons = [(p.get("fiche_feed") or {}).get("tonalite") for p in hist[-2:]]
-    if len(tons) == 2 and tons[0] and tons[0] == tons[1]:
+        c["regle_couverture"] = (f"différer d'au moins {alt['criteres_couverture_differents']} critères "
+                                 "(tonalité, luminosité, plan, sujet)")
+    n_ton = max(1, int(alt["meme_tonalite_max"]))
+    tons = [(p.get("fiche_feed") or {}).get("tonalite") for p in hist[-n_ton:]]
+    if len(tons) == n_ton and tons[0] and len(set(tons)) == 1:
         c["tonalite_imposee"] = "couleur" if tons[0] == "nb" else "nb"
-    longs = [p.get("longueur_legende") for p in hist[-2:]]
-    if len(longs) == 2 and longs[0] and longs[0] == longs[1]:
+    n_long = max(1, int(alt["meme_longueur_max"]))
+    longs = [p.get("longueur_legende") for p in hist[-n_long:]]
+    if len(longs) == n_long and longs[0] and len(set(longs)) == 1:
         c["longueur_interdite"] = longs[0]
     fenetre8 = hist[-7:]
-    c["publications_couple_possibles"] = max(0, 3 - sum(1 for p in fenetre8 if centree_couple(p)))
+    c["publications_couple_possibles"] = max(0, int(alt["couple_max_sur_8"])
+                                             - sum(1 for p in fenetre8 if centree_couple(p)))
     fenetre10 = hist[-9:]
     vus = {p.get("pilier") for p in fenetre10}
     c["piliers_absents_recemment"] = [x for x in PILIERS if x not in vus]
@@ -234,6 +272,8 @@ def valider_post(post: dict, hist: list = None, cfg: dict = None, catalogue: dic
     # on ne se compare pas à soi-même si le post du jour est déjà dans l'historique
     hist = [h for h in hist if not (h.get("jour") and h.get("jour") == post.get("jour"))]
     cfg = cfg or config.compte()
+    P = parametres()
+    alt, lim = P["alternance"], P["limites"]
     E, A = [], []
     fmt = post.get("format")
     if fmt not in FORMATS:
@@ -253,25 +293,28 @@ def valider_post(post: dict, hist: list = None, cfg: dict = None, catalogue: dic
     # ---- alternance avec l'historique
     precedent = hist[-1] if hist else None
     if precedent:
-        if precedent.get("pilier") == post.get("pilier"):
+        if alt["pilier_consecutif_interdit"] and precedent.get("pilier") == post.get("pilier"):
             E.append(f"Même pilier que la publication précédente ({post.get('pilier')})")
-        if precedent.get("serie") and precedent.get("serie") == post.get("serie"):
+        if alt["serie_consecutive_interdite"] and precedent.get("serie") and precedent.get("serie") == post.get("serie"):
             E.append("Même série que la publication précédente")
         diff = _comparer_couverture(precedent.get("fiche_feed"), fiche)
-        if diff < 2:
-            E.append(f"Couverture trop proche de la précédente ({diff} critère(s) différent(s), 2 requis)")
-    tons = [(p.get("fiche_feed") or {}).get("tonalite") for p in hist[-2:]] + [fiche.get("tonalite")]
-    if len(tons) == 3 and len(set(tons)) == 1:
-        E.append(f"Troisième couverture de suite en « {tons[0]} »")
-    longs = [p.get("longueur_legende") for p in hist[-2:]] + [post.get("longueur_legende")]
-    if len(longs) == 3 and len(set(longs)) == 1:
-        E.append(f"Troisième légende « {longs[0]} » de suite")
+        requis = int(alt["criteres_couverture_differents"])
+        if diff < requis:
+            E.append(f"Couverture trop proche de la précédente ({diff} critère(s) différent(s), {requis} requis)")
+    n_ton = max(1, int(alt["meme_tonalite_max"]))
+    tons = [(p.get("fiche_feed") or {}).get("tonalite") for p in hist[-n_ton:]] + [fiche.get("tonalite")]
+    if len(tons) == n_ton + 1 and len(set(tons)) == 1:
+        E.append(f"{n_ton + 1}e couverture de suite en « {tons[0]} »")
+    n_long = max(1, int(alt["meme_longueur_max"]))
+    longs = [p.get("longueur_legende") for p in hist[-n_long:]] + [post.get("longueur_legende")]
+    if len(longs) == n_long + 1 and len(set(longs)) == 1:
+        E.append(f"{n_long + 1}e légende « {longs[0]} » de suite")
     fen = hist[-7:] + [post]
-    if sum(1 for p in fen if centree_couple(p)) > 3:
-        A.append("Plus de 3 publications centrées sur le couple sur les 8 dernières")
+    if sum(1 for p in fen if centree_couple(p)) > int(alt["couple_max_sur_8"]):
+        A.append(f"Plus de {alt['couple_max_sur_8']} publications centrées sur le couple sur les 8 dernières")
     fen10 = hist[-9:] + [post]
-    if len(fen10) >= 10 and len({p.get("pilier") for p in fen10}) < 5:
-        A.append("Moins de 5 piliers différents sur les 10 dernières publications")
+    if len(fen10) >= 10 and len({p.get("pilier") for p in fen10}) < int(alt["piliers_min_sur_10"]):
+        A.append(f"Moins de {alt['piliers_min_sur_10']} piliers différents sur les 10 dernières publications")
     nb = sum(1 for p in fen10 if (p.get("fiche_feed") or {}).get("tonalite") == "nb")
     if len(fen10) >= 8 and not (0.3 <= nb / len(fen10) <= 0.7):
         A.append(f"Équilibre N&B / couleur à surveiller ({nb} N&B sur {len(fen10)})")
@@ -285,9 +328,11 @@ def valider_post(post: dict, hist: list = None, cfg: dict = None, catalogue: dic
     if fmt == "carrousel":
         if len(medias) < 2:
             E.append("Un carrousel demande au moins 2 médias")
-        if len(medias) > MAX_MEDIAS_EDITORIAL:
-            E.append(f"{len(medias)} médias : la règle éditoriale fixe 10 au maximum")
-        if 2 <= len(medias) < 6:
+        if len(medias) > int(lim["medias_carrousel"]):
+            E.append(f"{len(medias)} médias : la règle éditoriale fixe {lim['medias_carrousel']} au maximum")
+        if len(medias) > MAX_MEDIAS_API:
+            E.append(f"{len(medias)} médias : l'API d'Instagram en accepte {MAX_MEDIAS_API} au maximum")
+        if 2 <= len(medias) < int(lim["carrousel_court"]):
             A.append(f"Carrousel court ({len(medias)} images) : à justifier dans l'intention")
     if fmt == "image" and len(medias) != 1:
         E.append("Le format image demande exactement 1 média")
@@ -368,8 +413,8 @@ def valider_post(post: dict, hist: list = None, cfg: dict = None, catalogue: dic
         if compte.lower() not in connus:
             E.append(f"Compte @{compte} absent des données (prestataires de la série)")
     collab = post.get("collaborateurs") or []
-    if len(collab) > MAX_COLLABORATEURS:
-        E.append(f"Trop de collaborateurs ({len(collab)}, max {MAX_COLLABORATEURS})")
+    if len(collab) > int(lim["collaborateurs"]):
+        E.append(f"Trop de collaborateurs ({len(collab)}, max {lim['collaborateurs']})")
     for c in collab:
         if str(c).lstrip("@").lower() not in connus:
             E.append(f"Collaborateur {c} absent des données")

@@ -1,0 +1,23 @@
+# Apparence de l'app Studio Instagram. Modifiable dans l'app (Réglages › Apparence)
+# ou en le demandant à Claude. L'app se met à jour dès que ce fichier change.
+
+nom_affiche: "Studio Instagram"
+salutation: "Bonjour"            # en tête de l'écran Aujourd'hui
+mode: auto                       # auto | clair | sombre
+couleurs:
+  accent: "#3d4130"              # olive : boutons, sélection
+  accent_doux: "#efdccd"         # pêche : fonds doux, badges
+  fond_clair: "#f7f3ed"          # papier
+  fond_sombre: "#17160f"
+  succes: "#3f6b45"
+  alerte: "#a8551c"
+ambiance: provence               # dégradé de fond : provence | lavande | aube | sauge | nuit
+points: true                     # fine trame de points sur le dégradé
+police: jakarta                  # jakarta (Plus Jakarta Sans) | systeme | arrondie
+titres: police                   # police (comme le texte) | serif | arrondi | standard
+densite: confortable             # compacte | confortable | aeree
+arrondi: 14                      # 0 à 28
+animations: normales             # aucune | discretes | normales | riches
+icones: pleines                  # pleines | contours
+# Ordre et écrans visibles dans la barre latérale (aujourdhui et reglages restent toujours visibles).
+ecrans: [aujourdhui, idees, apercu, galeries, statistiques, reglages, charte, regles]
