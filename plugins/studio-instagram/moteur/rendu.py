@@ -8,8 +8,6 @@ def rendre(jour: str) -> dict:
     post = config.lire_json(d / "post.json")
     if not post:
         raise ErreurStudio("post.json absent.")
-    if post.get("format") == "reel":
-        return {"info": "Reel : utilise ./studio reel monter " + jour}
     cfg = config.compte()
     fonds = (cfg.get("mise_en_page") or {}).get("fonds") or {}
     marge_defaut = (cfg.get("mise_en_page") or {}).get("marge_px", 64)
@@ -21,6 +19,16 @@ def rendre(jour: str) -> dict:
             f.unlink()
     rapports, avert = [], []
     for i, m in enumerate(medias, 1):
+        if m.get("module"):
+            ids = config.ids_media(m)
+            rots = m.get("rotations") or [sources.rotation(serie, x) for x in ids]
+            r = images.rendre_module([sources.chemin_photo(serie, x, hd=True) for x in ids], sortie / f"{i:02d}.jpg",
+                                     m["module"], m.get("ancrages"), m.get("points_focaux"), rots, m.get("fond"),
+                                     m.get("marge", marge_defaut), m.get("gouttiere"), fonds)
+            if r["agrandissement"] > 1.2:
+                avert.append(f"Image {i} : une photo du module est agrandie ×{r['agrandissement']}")
+            rapports.append({"ordre": i, "photos": ids, **{k: r[k] for k in ("presentation", "agrandissement", "octets")}})
+            continue
         ident = str(m.get("photo_id") or m.get("fichier"))
         src = sources.chemin_photo(serie, ident, hd=True)
         rot = m.get("rotation")
@@ -43,7 +51,7 @@ def rendre(jour: str) -> dict:
 def candidats(serie_id: str = None, note_min: int = 4, n: int = 60) -> list:
     """Meilleures photos encore jamais publiées, une par rafale."""
     from .publication import deja_publiee_ressemblante
-    publiees = {m.get("photo_id") for h in config.historique() for m in h.get("medias", [])}
+    publiees = {x for h in config.historique() for m in h.get("medias", []) for x in config.ids_media(m)}
     res = []
     for s in config.series():
         if serie_id and s["id"] != serie_id:

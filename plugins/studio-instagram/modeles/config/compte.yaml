@@ -30,7 +30,6 @@ publication:
     vendredi: "12:30"
     samedi: "10:00"
     dimanche: "19:00"
-  part_reels: 0.25            # environ une publication sur quatre
   hebergement: tunnel         # tunnel (cloudflared, sans compte) ou supabase
   bucket_supabase: instagram-temp
 
@@ -40,7 +39,7 @@ routine:
   idees_exploration: 1        # dont une idée « exploration » pour continuer d'apprendre
 
 instagram:
-  api: facebook               # facebook (musique Instagram sur les Reels) ou instagram (plus simple)
+  api: facebook               # facebook ou instagram (plus simple)
   version_api: v25.0
 
 mise_en_page:

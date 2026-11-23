@@ -53,9 +53,7 @@ struct VueIdees: View {
     }
 
     private var surTitre: String {
-        guard let d = etat.vue?.date_longue?.nonVide else { return "Idées du jour" }
-        // « Jeudi 19 novembre » : seule la première lettre en capitale.
-        return "Idées du jour · " + d.prefix(1).uppercased() + d.dropFirst()
+        "Idées du jour"
     }
 }
 
@@ -242,7 +240,6 @@ struct ActionsIdees: View {
 enum LibellesIdee {
     static func format(_ idee: Idee) -> String {
         let f = idee.format_libelle ?? idee.format ?? "Post"
-        if idee.format == "reel", let d = idee.duree_s { return "\(f) · \(Int(d)) s" }
         if idee.format == "carrousel", let n = idee.nb_medias { return "\(f) · \(n)" }
         return f
     }

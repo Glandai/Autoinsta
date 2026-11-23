@@ -74,10 +74,11 @@ def lancer() -> dict:
             {"titre": "Trois noirs et blancs", "pitch": "Une image seule, en noir et blanc, qui laisse tout le silence à la scène.",
              "format": "image", "pilier": "ATMOSPHERE", "serie": "demo", "type": "valeur_sure", "couverture": ids[2],
              "photos": [], "longueur_legende": "silencieuse", "pourquoi": "Respiration après une semaine chargée (démo)."},
-            {"titre": "Quinze secondes de vent", "pitch": "Un Reel très lent à partir de quatre images, comme un souvenir qui revient.",
-             "format": "reel", "duree_s": 15, "pilier": "ARTISTIC_VISION", "serie": "demo", "type": "exploration",
+            {"titre": "Les détails, deux par deux", "pitch": "Un carrousel en diptyques : chaque page associe deux détails qui se répondent.",
+             "brief": "Des diptyques de détails qui se répondent.",
+             "format": "carrousel", "nb_medias": 5, "pilier": "ARTISTIC_VISION", "serie": "demo", "type": "exploration",
              "couverture": ids[4], "photos": ids[5:8], "longueur_legende": "courte",
-             "pourquoi": "Aucun Reel depuis 6 posts : on teste un format plus contemplatif.", "musique": "Cordes lointaines, tempo très lent."},
+             "pourquoi": "On teste une mise en page magazine (démo).", "musique": "Cordes lointaines, tempo très lent."},
         ]})
     journee.enregistrer_idees(jour)
     page_idees = pages.page_idees(jour)
@@ -92,8 +93,11 @@ def lancer() -> dict:
                     "presentation": "marges" if cat["photos"][i].get("orientation") == "paysage" else "plein_cadre",
                     "ancrage": "centre", "fond": "clair",
                     "texte_alternatif": f"Image de démonstration {i + 1} : un domaine, des arches, une lumière douce.",
-                    "identifications": ["domaine.demo"] if i == 0 else []} for i, pid in enumerate(ordre)],
-        "reel": None,
+                    "identifications": ["domaine.demo"] if i == 0 else []} for i, pid in enumerate(ordre)]
+        + ([{"ordre": 7, "module": "diptyque", "photos": ids[6:8], "fichier": ids[6], "photo_id": ids[6],
+             "role": "cloture", "fond": "clair",
+             "texte_alternatif": "Deux images de démonstration côte à côte : une arche et une table dressée."}]
+           if len(ids) >= 8 else []),
         "legende": ("À neuf heures, le domaine appartenait encore aux hirondelles.\n"
                     "Les tables attendaient sous les platanes, les chaises n'avaient pas encore bougé.\n\n"
                     "Lieu @domaine.demo\nFleurs @atelier.demo\n\n#mariagegard #domainedemo #provencewedding"),

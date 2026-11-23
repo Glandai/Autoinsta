@@ -110,6 +110,10 @@ struct Musique: Codable, Equatable {
     /// 0 à 100.
     var volume_musique: Double? = nil
     var volume_video: Double? = nil
+    /// Pochette (URL), d'où vient la piste (instagram, tendances, recherche) et sa page.
+    var pochette: String? = nil
+    var source: String? = nil
+    var lien: String? = nil
 
     static let modes = ["api_reel", "integree", "a_ajouter_dans_l_app", "aucune"]
 
@@ -126,7 +130,8 @@ struct Musique: Codable, Equatable {
 
 extension Musique {
     enum CodingKeys: String, CodingKey {
-        case mode, titre, artiste, direction_sonore, apercu_url, audio_id, requete, volume_musique, volume_video
+        case mode, titre, artiste, direction_sonore, apercu_url, audio_id, requete, volume_musique, volume_video,
+             pochette, source, lien
     }
 
     init(from decoder: Decoder) throws {
@@ -140,6 +145,9 @@ extension Musique {
         requete = c.texte(.requete)?.nonVide
         volume_musique = c.nombre(.volume_musique)
         volume_video = c.nombre(.volume_video)
+        pochette = c.texte(.pochette)?.nonVide
+        source = c.texte(.source)?.nonVide
+        lien = c.texte(.lien)?.nonVide
     }
 }
 
@@ -155,6 +163,13 @@ struct MediaPost: Decodable, Identifiable {
     let photo_id: String?
     /// clair | sombre | papier
     let fond: String?
+    /// Plusieurs photos sur une même page : diptyque, duo_empile, duo_decale, trio, grille, tirage.
+    let module: String?
+    /// Les photos de la page (une seule hors module).
+    let photos: [String]?
+
+    /// Nombre de photos posées sur cette page.
+    var nombrePhotos: Int { max(1, photos?.count ?? 1) }
 }
 
 struct Verdict: Decodable {
@@ -379,7 +394,6 @@ extension ReglagesPlanification {
 
 struct Publication: Codable {
     var creneaux: [String: String]
-    var part_reels: Double
     var hebergement: String
     var bucket_supabase: String
 }
@@ -518,7 +532,6 @@ struct Sante: Decodable {
     let jeton_expire_le: String?
     let hebergement: String?
     let hebergement_pret: Bool?
-    let ffmpeg: Bool?
     let galeries: Int?
     let publications: Int?
 }
@@ -1190,7 +1203,7 @@ extension Apparence {
         a.nom_affiche = nom_affiche.nonVide ?? d.nom_affiche
         a.salutation = salutation.nonVide ?? d.salutation
         a.mode = choix(mode, Apparence.modes, d.mode)
-        a.ambiance = choix(ambiance, Apparence.ambiances, d.ambiance)
+        a.ambiance = Humeur.lire(ambiance) != nil ? ambiance : choix(ambiance, Apparence.ambiances, d.ambiance)
         // Comme le moteur : tout le reste garde sa valeur d'origine (app simple et rapide).
         a.couleurs = d.couleurs
         a.police = d.police
@@ -1223,6 +1236,9 @@ struct MediaModifie: Encodable, Equatable, Identifiable {
     /// clair | sombre | papier
     var fond: String? = nil
     var texte_alternatif: String? = nil
+    /// Mise en page de plusieurs photos sur une même page (voir `ModulePage`).
+    var module: String? = nil
+    var photos: [String]? = nil
 
     var id: String { photo_id }
 
@@ -1323,12 +1339,20 @@ struct PisteMusique: Decodable, Identifiable, Equatable {
     var apercu_url: String?
     var lien_instagram: String?
     var pochette: String?
+    /// instagram (bibliothèque Instagram), tendances (les plus écoutés sur Apple Music) ou recherche (iTunes).
+    var source: String?
+    var lien: String?
 
     var id: String { audio_id }
+
+    var duree: String? {
+        guard let d = duree_s, d > 0 else { return nil }
+        return String(format: "%d:%02d", Int(d) / 60, Int(d) % 60)
+    }
 }
 
 extension PisteMusique {
-    enum CodingKeys: String, CodingKey { case audio_id, titre, artiste, duree_s, apercu_url, lien_instagram, pochette }
+    enum CodingKeys: String, CodingKey { case audio_id, titre, artiste, duree_s, apercu_url, lien_instagram, pochette, source, lien }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1339,12 +1363,14 @@ extension PisteMusique {
         apercu_url = c.texte(.apercu_url)?.nonVide
         lien_instagram = c.texte(.lien_instagram)?.nonVide
         pochette = c.texte(.pochette)?.nonVide
+        source = c.texte(.source)?.nonVide
+        lien = c.texte(.lien)?.nonVide ?? lien_instagram
     }
 
-    /// La musique à envoyer à `modifierPost` pour cette piste (Reel : volume de la vidéo d'origine coupé).
+    /// La musique à envoyer à `modifierPost` pour cette piste (à ajouter dans l'app Instagram après publication).
     func musique(volumeVideo: Double = 0) -> Musique {
-        Musique(mode: "api_reel", titre: titre, artiste: artiste, apercu_url: apercu_url, audio_id: audio_id,
-                volume_musique: 100, volume_video: volumeVideo)
+        Musique(mode: "a_ajouter_dans_l_app", titre: titre, artiste: artiste, apercu_url: apercu_url, audio_id: audio_id,
+                volume_musique: 100, volume_video: volumeVideo, pochette: pochette, source: source, lien: lien)
     }
 }
 
@@ -1501,4 +1527,25 @@ extension ReponseExport {
         dossier = c.texte(CleJSON("dossier"))?.nonVide
         fichiers = c.souple([String].self, CleJSON("fichiers")) ?? []
     }
+}
+
+
+/// Les mises en page de plusieurs photos sur une même page du carrousel (moteur : images.MODULES).
+struct ModulePage: Identifiable {
+    let cle: String
+    let titre: String
+    let symbole: String
+    let photos: Int
+    var id: String { cle }
+
+    static let tous: [ModulePage] = [
+        ModulePage(cle: "diptyque", titre: "Côte à côte", symbole: "rectangle.split.2x1", photos: 2),
+        ModulePage(cle: "duo_empile", titre: "L'une sur l'autre", symbole: "rectangle.split.1x2", photos: 2),
+        ModulePage(cle: "duo_decale", titre: "Décalées", symbole: "square.on.square", photos: 2),
+        ModulePage(cle: "trio", titre: "Une grande, deux petites", symbole: "rectangle.split.3x1", photos: 3),
+        ModulePage(cle: "grille", titre: "Grille de quatre", symbole: "square.grid.2x2", photos: 4),
+        ModulePage(cle: "tirage", titre: "Tirage", symbole: "photo", photos: 1),
+    ]
+
+    static func pour(_ n: Int) -> [ModulePage] { tous.filter { $0.photos == n } }
 }

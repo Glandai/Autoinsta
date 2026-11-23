@@ -2,7 +2,7 @@
 
 ## Le plus simple : l'installateur Mac (.pkg)
 
-1. Télécharge **Studio-Instagram-2.2.0.pkg** dans la page [Releases](https://github.com/Glandai/Autoinsta/releases) du dépôt.
+1. Télécharge **Studio-Instagram-2.3.0.pkg** dans la page [Releases](https://github.com/Glandai/Autoinsta/releases) du dépôt.
 2. Double-clique dessus et suis l'installateur : l'app **Studio Instagram** arrive dans Applications.
 3. Ouvre-la : elle crée ton studio, te demande ton nom, ton compte Instagram et ce que tu photographies, puis te guide pour connecter Claude et Instagram. Aucune commande, aucun outil à installer.
 

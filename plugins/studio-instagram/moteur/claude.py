@@ -107,6 +107,16 @@ def _vivant(pid) -> bool:
         return False
 
 
+# Sans modèle choisi dans les réglages : Opus pour ce qui demande du jugement (créer un post, trouver des idées,
+# préparer la journée, une demande libre), Sonnet pour le reste (retouches, galeries, bilan, charte).
+TACHES_COMPLEXES = ("matin", "creation", "idees", "demande")
+
+
+def modele_pour(tache: str, reglages: dict = None) -> str:
+    choisi = str((reglages if reglages is not None else _reglages()).get("modele") or "").strip()
+    return choisi or ("opus" if tache in TACHES_COMPLEXES else "sonnet")
+
+
 def _reglages() -> dict:
     return (config.compte() or {}).get("claude") or {}
 
@@ -532,7 +542,6 @@ ETAPES_STUDIO = {
     "apercu": ("Je prépare l'aperçu", "iphone"),
     "retouche": ("Je note ta retouche", "pencil"),
     "musique": ("Je cherche une musique", "music.note"),
-    "reel": ("Je monte le Reel", "film"),
     "ui": ("J'ouvre le bon écran dans l'app", "macwindow"),
     "app": ("Je mets l'app à jour", "macwindow"),
     "historique": ("Je relis l'historique du compte", "clock.arrow.circlepath"),
@@ -735,8 +744,7 @@ def _commande(binaire: str, e: dict, session: str, reprise: bool) -> list:
            "-n", "Studio · " + e["tache"] + " · " + e["jour"]]
     cmd += ["--resume", session] if reprise else ["--session-id", session]
     r = _reglages()
-    if r.get("modele"):
-        cmd += ["--model", str(r["modele"])]
+    cmd += ["--model", modele_pour(e["tache"], r)]
     if r.get("effort") in ("low", "medium", "high", "xhigh", "max"):
         cmd += ["--effort", str(r["effort"])]
     cmd += ["--allowedTools"] + list(OUTILS)          # en dernier : l'option accepte plusieurs valeurs

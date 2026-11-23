@@ -1,6 +1,6 @@
 # Bibliothèque libre de droits (facultative)
 
-Normalement, la musique des Reels vient de la bibliothèque Instagram (API Audio, route Facebook) et n'a pas besoin de fichier ici.
+Le studio ne publie pas de Reels : la musique d'un carrousel s'ajoute dans l'application Instagram après publication. Ce dossier reste pour d'éventuelles pistes libres de droits.
 
 Ce dossier sert seulement si l'API Audio n'est pas disponible (route Instagram) : déposez-y des pistes dont la licence autorise l'usage sur Instagram (achetées sur Artlist, Epidemic Sound, ou libres comme certaines pistes de Pixabay Music, en vérifiant la licence), au format `.mp3` ou `.m4a`.
 

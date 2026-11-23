@@ -47,7 +47,7 @@ Le fichier part vide (`[À COMPLÉTER : …]`) : le studio sert à n'importe que
 
 ## 4. Connecter Instagram
 
-Explique les deux routes de `docs/connexion-instagram.md` et recommande la route A (Facebook), seule à permettre l'ajout automatique de musique Instagram sur les Reels. Elle fait elle-même chaque étape dans son navigateur : tu guides, tu ne te connectes pas à sa place, tu ne demandes jamais un mot de passe, un code ni un jeton dans la conversation, et tu ne lis jamais `.env`.
+Explique les deux routes de `docs/connexion-instagram.md` et recommande la route A (Facebook). Elle fait elle-même chaque étape dans son navigateur : tu guides, tu ne te connectes pas à sa place, tu ne demandes jamais un mot de passe, un code ni un jeton dans la conversation, et tu ne lis jamais `.env`.
 - Quand elle a ses identifiants, elle les colle elle-même dans `.env` : propose de l'ouvrir dans TextEdit (`open -e .env`).
 - Route A : `./studio jeton echanger` (jeton long et identifiant du compte), puis `./studio jeton verifier`.
 - Route B : mets `instagram.api: instagram` dans `config/compte.yaml`, puis `./studio jeton echanger` et `./studio jeton verifier`.

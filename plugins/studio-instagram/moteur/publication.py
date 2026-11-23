@@ -92,34 +92,6 @@ def publier(jour: str, simulation: bool = False, forcer: bool = False) -> dict:
                     except ErreurAPI:
                         parent = ig.conteneur_image(url, legende=legende)
             ig.attendre(parent)
-        elif fmt == "reel":
-            video = rendu / "reel.mp4"
-            if not video.exists():
-                raise ErreurStudio("Vidéo absente : lance ./studio reel monter " + jour)
-            couverture = rendu / "couverture.jpg"
-            mus = post.get("musique") or {}
-            audio = None
-            if mus.get("mode") == "api_reel" and mus.get("audio_id"):
-                audio = {"audio_id": str(mus["audio_id"]), "audio_volume": int(mus.get("volume_musique", 100)),
-                         "video_volume": int(mus.get("volume_video", 0))}
-            url_video = h.url(video)
-            url_couv = h.url(couverture) if couverture.exists() else None
-            try:
-                parent = ig.conteneur_reel(url_video, legende, cover_url=url_couv, collaborateurs=collab,
-                                           location_id=location_id, audio=audio)
-            except ErreurAPI as err:
-                if not (audio or collab or location_id):
-                    raise
-                try:      # d'abord sans collaborateurs ni lieu, en gardant la musique validée
-                    parent = ig.conteneur_reel(url_video, legende, cover_url=url_couv, audio=audio)
-                    if collab or location_id:
-                        avert.append(f"Collaborateurs ou lieu refusés ({err}) : Reel publié sans")
-                except ErreurAPI as err2:
-                    if audio:    # on ne publie pas sans la musique qu'elle a validée
-                        raise ErreurStudio(f"Instagram refuse la musique choisie ({err2}). Rien n'a été publié : "
-                                           "choisis une autre piste, ou publie sans musique.")
-                    raise
-            ig.attendre(parent, delai_max=900)
         else:
             raise ErreurStudio(f"Format inconnu : {fmt}")
         media_id = ig.publier(parent)
@@ -132,25 +104,24 @@ def publier(jour: str, simulation: bool = False, forcer: bool = False) -> dict:
         config.ecrire_json(d / "simulation.json", resultat)
         return resultat
     config.ecrire_json(d / "publication.json", resultat)
-    couv = rendu / ("couverture.jpg" if fmt == "reel" else "01.jpg")
+    couv = rendu / "01.jpg"
     if couv.exists():
         (config.chemin("donnees", "couvertures")).mkdir(parents=True, exist_ok=True)
         shutil.copy2(couv, config.chemin("donnees", "couvertures", f"{jour}.jpg"))
     hist = config.historique()
-    if fmt == "reel":       # on retient les photos et clips montés, pour ne pas les reprendre
-        plan = (post.get("reel") or {}).get("plan_de_montage") or []
-        medias = [{"ordre": p.get("ordre"), "photo_id": str(p.get("fichier"))} for p in plan] or medias
     hist.append({
         "jour": jour, "date": moment[:10], "heure": moment[11:16], "format": fmt, "titre": post.get("titre"),
         "pilier": post.get("pilier"), "piliers_secondaires": post.get("piliers_secondaires"),
         "serie": post.get("serie"), "longueur_legende": post.get("longueur_legende"),
         "fiche_feed": post.get("fiche_feed"), "centree_couple": regles.centree_couple(post),
-        "medias": [{"ordre": m.get("ordre"), "photo_id": str(m.get("photo_id") or m.get("fichier"))} for m in medias],
+        "medias": [{"ordre": m.get("ordre"), "photo_id": config.ids_media(m)[0] if config.ids_media(m) else "",
+                    **({"photos": config.ids_media(m), "module": m.get("module")} if m.get("module") else {})}
+                   for m in medias],
         "collaborateurs": collab, "hashtags": post.get("hashtags"), "musique": (post.get("musique") or {}).get("titre"),
         "media_id": media_id, "permalink": info.get("permalink"), "publie_le": moment})
     config.enregistrer_historique(hist)
     cat = sources.lire_catalogue(post.get("serie"))
-    ids = {str(m.get("photo_id") or m.get("fichier")) for m in medias}
+    ids = {x for m in medias for x in config.ids_media(m)}
     for p in cat.get("photos", []):
         if p["id"] in ids:
             p["publiee"] = jour

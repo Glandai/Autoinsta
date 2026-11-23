@@ -28,7 +28,7 @@ JOURS = config.JOURS_FR
 LIBELLE_PILIER = {"EDITORIAL": "Éditorial", "DOCUMENTARY": "Documentaire", "DETAILS": "Détails",
                   "PLACES": "Lieux", "PORTRAITS": "Portraits", "LOVE_STORY": "Love story",
                   "ATMOSPHERE": "Atmosphère", "ARTISTIC_VISION": "Vision artistique"}
-LIBELLE_FORMAT = {"carrousel": "Carrousel", "image": "Image seule", "reel": "Reel"}
+LIBELLE_FORMAT = {"carrousel": "Carrousel", "image": "Image seule", "reel": "Vidéo"}
 LIBELLE_STATUT = {"nouveau": "En préparation", "idees_proposees": "Idées à choisir",
                   "idee_choisie": "Post en préparation", "brouillon_pret": "Aperçu à valider",
                   "approuve": "Validé, publication prévue", "publie": "Publié", "reporte": "Reporté",
@@ -257,15 +257,15 @@ def vue_jour(jour: str = None) -> dict:
             "nom": cfg.get("nom") or "",
             "musique": post.get("musique") or {},
             "medias": [{"ordre": i, "role": m.get("role"), "presentation": m.get("presentation"),
-                        "photo_id": str(m.get("photo_id") or m.get("fichier") or ""), "fond": m.get("fond"),
+                        "photo_id": (config.ids_media(m) or [""])[0], "fond": m.get("fond"),
+                        "module": m.get("module"), "photos": config.ids_media(m),
                         "texte_alternatif": m.get("texte_alternatif"),
                         "identifications": [(t.get("compte") if isinstance(t, dict) else t)
                                             for t in (m.get("identifications") or [])],
                         "image": _abs(rendu / f"{i:02d}.jpg") if (rendu / f"{i:02d}.jpg").exists() else None}
                        for i, m in enumerate(medias, 1)],
-            "video": _abs(rendu / "reel.mp4") if (rendu / "reel.mp4").exists() else None,
-            "couverture": _abs(rendu / ("couverture.jpg" if post.get("format") == "reel" else "01.jpg"))
-            if (rendu / ("couverture.jpg" if post.get("format") == "reel" else "01.jpg")).exists() else None,
+            "video": None,
+            "couverture": _abs(rendu / "01.jpg") if (rendu / "01.jpg").exists() else None,
         }
         v = regles.valider_post(post, catalogue=sources.lire_catalogue(post.get("serie")))
         res["verdict"] = {"conforme": v["conforme"], "erreurs": v["erreurs"], "avertissements": v["avertissements"],
@@ -313,7 +313,6 @@ def reglages() -> dict:
         "exemples_de_legendes": [str(x) for x in (c.get("exemples_de_legendes") or [])],
         "publication": {
             "creneaux": {j: str((pub.get("creneaux") or {}).get(j) or "") for j in JOURS},
-            "part_reels": float(pub.get("part_reels", 0.25)),
             "hebergement": pub.get("hebergement", "tunnel"),
             "bucket_supabase": pub.get("bucket_supabase", "instagram-temp"),
         },
@@ -363,8 +362,6 @@ def enregistrer_reglages(fichier: str) -> dict:
     for nom in ("heure_idees", "heure_bilan"):
         if rou.get(nom) and not HEURE.match(str(rou[nom])):
             erreurs.append(f"Heure invalide : {rou[nom]}")
-    if not 0 <= float(pub.get("part_reels", 0.25)) <= 1:
-        erreurs.append("La part de Reels doit être entre 0 et 100 %")
     nb = int(rou.get("nombre_idees", 3))
     if not 1 <= nb <= 6:
         erreurs.append("Entre 1 et 6 idées par matin")
@@ -433,6 +430,8 @@ CHOIX_APPARENCE = {"mode": ("auto", "clair", "sombre"), "titres": ("police", "se
                    "densite": ("compacte", "confortable", "aeree"),
                    "animations": ("aucune", "discretes", "normales", "riches"), "icones": ("pleines", "contours")}
 ECRANS_FIXES = ("aujourdhui", "reglages")
+# Ambiance libre, choisie sur le nuancier de Réglages › Apparence : « humeur:0.42,0.70 » (x, y entre 0 et 1).
+HUMEUR = re.compile(r"^humeur:(0(\.\d{1,3})?|1(\.0{1,3})?),(0(\.\d{1,3})?|1(\.0{1,3})?)$")
 APPARENCE_REGLABLE = ("nom_affiche", "salutation", "mode", "ambiance")
 APPARENCE_FIXE = ("police", "titres", "points", "densite", "arrondi", "animations", "icones")
 # Barre d'icônes : l'essentiel. Idées et aperçu passent par « + » et l'accueil ; charte et règles par les Réglages.
@@ -473,6 +472,8 @@ def apparence() -> dict:
     }
     for cle, choix in CHOIX_APPARENCE.items():
         res[cle] = a.get(cle) if a.get(cle) in choix else d[cle]
+    if HUMEUR.match(str(a.get("ambiance") or "")):
+        res["ambiance"] = a["ambiance"]
     res["points"] = bool(a.get("points", d["points"])) if isinstance(a.get("points", d["points"]), bool) else d["points"]
     # Seuls le mode, l'ambiance, le nom du studio et la salutation se règlent : le reste est fixé pour garder
     # une app simple et rapide (pas de trame de points, police et formes d'origine, écrans essentiels).
@@ -490,6 +491,8 @@ def _valider_apparence(n: dict) -> list:
         elif not COULEUR.match(str(v)):
             erreurs.append(f"Couleur invalide pour {cle} : {v} (format #rrggbb)")
     for cle, choix in CHOIX_APPARENCE.items():
+        if cle == "ambiance" and HUMEUR.match(str(n.get(cle) or "")):
+            continue
         if cle in n and n[cle] not in choix:
             erreurs.append(f"Valeur invalide pour {cle} : {n[cle]} ({', '.join(choix)})")
     if "points" in n and not isinstance(n["points"], bool):
@@ -568,9 +571,44 @@ def modifier_post(jour: str, fichier: str) -> dict:
         maxi = 1 if post.get("format") == "image" else int(regles.parametres()["limites"]["medias_carrousel"])
         if not 1 <= len(liste) <= maxi:
             raise ErreurStudio(f"Choisis entre 1 et {maxi} photo(s).")
-        anciens = {str(m.get("photo_id") or m.get("fichier")): m for m in post.get("medias") or []}
+        from .images import MODULES
+        anciens, modules_anciens = {}, {}
+        for m in post.get("medias") or []:
+            ids = config.ids_media(m)
+            if m.get("module"):
+                modules_anciens[tuple(ids)] = m
+            elif ids:
+                anciens[ids[0]] = m
         nouveaux, vus = [], set()
         for i, x in enumerate(liste, 1):
+            if isinstance(x, dict) and x.get("module"):          # plusieurs photos sur une même page
+                mod, ids = str(x["module"]), [str(y) for y in (x.get("photos") or [])]
+                if mod not in MODULES:
+                    raise ErreurStudio(f"Mise en page inconnue : {mod}")
+                if len(ids) != MODULES[mod]["photos"]:
+                    raise ErreurStudio(f"« {MODULES[mod]['nom']} » demande {MODULES[mod]['photos']} photo(s).")
+                if any(y in vus for y in ids):
+                    raise ErreurStudio("Chaque photo ne peut apparaître qu'une fois.")
+                vus.update(ids)
+                m = modules_anciens.get(tuple(ids))
+                if m:
+                    m = dict(m)
+                else:
+                    bases = [anciens.get(y) or _nouveau_media(post.get("serie"), y) for y in ids]
+                    m = {k: v for k, v in bases[0].items() if k not in ("presentation", "ancrage", "point_focal", "rotation")}
+                    alts = [str(b.get("texte_alternatif") or "").strip().rstrip(".") for b in bases]
+                    m["texte_alternatif"] = (alts[0] + ".") if len(ids) == 1 else \
+                        f"{len(ids)} photos sur une page : " + " ; ".join(a for a in alts if a) + "."
+                    m["identifications"] = []
+                m.update(module=mod, photos=ids, fichier=ids[0], photo_id=ids[0])
+                m.pop("presentation", None)
+                if x.get("fond") in FONDS_MEDIA:
+                    m["fond"] = x["fond"]
+                if isinstance(x.get("texte_alternatif"), str) and x["texte_alternatif"].strip():
+                    m["texte_alternatif"] = x["texte_alternatif"].strip()
+                m["ordre"] = i
+                nouveaux.append(m)
+                continue
             ident = str(x if isinstance(x, str) else (x.get("photo_id") or x.get("fichier") or ""))
             if not ident or ident in vus:
                 raise ErreurStudio("Chaque photo ne peut apparaître qu'une fois.")
@@ -584,13 +622,14 @@ def modifier_post(jour: str, fichier: str) -> dict:
                 if isinstance(x.get("texte_alternatif"), str) and x["texte_alternatif"].strip():
                     m["texte_alternatif"] = x["texte_alternatif"].strip()
             m.update(ordre=i, fichier=ident, photo_id=ident)
+            nouveaux.append(m)
+        for i, m in enumerate(nouveaux, 1):
             if i == 1:
                 m["role"] = "ouverture"
-            elif i == len(liste) and len(liste) > 2:
+            elif i == len(nouveaux) and len(nouveaux) > 2:
                 m["role"] = "cloture"
             elif m.get("role") in ("ouverture", "cloture"):
                 m["role"] = "progression"
-            nouveaux.append(m)
         post["medias"] = nouveaux
         changements.append("photos")
     if "legende" in n:
@@ -603,14 +642,15 @@ def modifier_post(jour: str, fichier: str) -> dict:
         mu = n.get("musique") or {}
         if not isinstance(mu, dict) or mu.get("mode") not in MODES_MUSIQUE:
             raise ErreurStudio("Musique invalide.")
-        garde = ("mode", "audio_id", "titre", "artiste", "apercu_url", "volume_musique", "volume_video",
+        garde = ("mode", "audio_id", "titre", "artiste", "apercu_url", "pochette", "source", "lien",
+                 "volume_musique", "volume_video",
                  "direction_sonore", "requete")
         post["musique"] = {**(post.get("musique") or {}), **{k: mu.get(k) for k in garde if k in mu}}
         changements.append("musique")
     if not changements:
         return {"etat": "inchange", "changements": []}
     config.ecrire_json(d / "post.json", post)
-    rendu_info = rendu.rendre(jour) if "photos" in changements and post.get("format") != "reel" else None
+    rendu_info = rendu.rendre(jour) if "photos" in changements else None
     post.setdefault("jour", jour)
     controle = regles.valider_post(post, catalogue=sources.lire_catalogue(post.get("serie")))
     pages.page_apercu(jour)
@@ -751,7 +791,7 @@ def ajouter_source(fichier: str) -> dict:
 
 
 def exporter(jour: str, dossier: str = None) -> dict:
-    """Le post prêt, à télécharger : images mises en page (ou vidéo du Reel) et légende complète."""
+    """Le post prêt, à télécharger : images mises en page et légende complète."""
     import shutil
     d = config.dossier_jour(jour)
     post = config.lire_json(d / "post.json")
@@ -762,7 +802,7 @@ def exporter(jour: str, dossier: str = None) -> dict:
     cible.mkdir(parents=True, exist_ok=True)
     fichiers = []
     rendu = d / "rendu"
-    for f in sorted(rendu.glob("[0-9][0-9].jpg")) + ([rendu / "reel.mp4"] if (rendu / "reel.mp4").exists() else []):
+    for f in sorted(rendu.glob("[0-9][0-9].jpg")):
         shutil.copy2(f, cible / f.name)
         fichiers.append(f.name)
     legende = str(post.get("legende") or "").strip()
@@ -996,12 +1036,6 @@ def sante() -> dict:
     chercher(cfg)
     env = config.secrets()
     heb = (cfg.get("publication") or {}).get("hebergement", "tunnel")
-    try:
-        from .reel import ffmpeg
-        ffmpeg()
-        ff = True
-    except ErreurStudio:
-        ff = False
     version = config.chemin("moteur", "VERSION")
     return {
         "version": version.read_text().strip() if version.exists() else "",
@@ -1012,7 +1046,6 @@ def sante() -> dict:
         "hebergement": heb,
         "hebergement_pret": (config.chemin("outils", "cloudflared").exists() or bool(shutil.which("cloudflared")))
         if heb == "tunnel" else bool(env.get("SUPABASE_URL") and env.get("SUPABASE_SERVICE_KEY")),
-        "ffmpeg": ff,
         "galeries": len(config.series()),
         "publications": len(config.historique()),
     }

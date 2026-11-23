@@ -219,6 +219,94 @@ def rendre_4x5(source, sortie, presentation="plein_cadre", ancrage="centre", poi
     return rapport
 
 
+# --------------------------------------------------------------------------- modules (plusieurs photos)
+
+# Un module pose plusieurs photos sur une même diapositive 4:5, sur un fond uni, avec des marges
+# et une gouttière blanches, comme une page de magazine ou un tirage. Les photos sont seulement
+# recadrées et réduites : jamais modifiées.
+MODULES = {
+    "diptyque":   {"photos": 2, "nom": "Deux côte à côte", "aide": "deux verticales qui se répondent"},
+    "duo_empile": {"photos": 2, "nom": "Deux l'une sur l'autre", "aide": "deux horizontales"},
+    "duo_decale": {"photos": 2, "nom": "Deux décalées", "aide": "une grande, une petite qui la chevauche"},
+    "trio":       {"photos": 3, "nom": "Une grande et deux petites", "aide": "une scène et deux détails"},
+    "grille":     {"photos": 4, "nom": "Grille de quatre", "aide": "quatre détails d'un même moment"},
+    "tirage":     {"photos": 1, "nom": "Tirage", "aide": "une photo entière posée comme un tirage papier"},
+}
+
+
+def _cases(module, m, g):
+    """Cases (x, y, l, h) du module dans la toile 1080x1350, marge m et gouttière g."""
+    W, H = LARGEUR, HAUTEUR
+    iw, ih = W - 2 * m, H - 2 * m
+    if module == "diptyque":
+        cw = (iw - g) // 2
+        ch = min(ih, int(cw * 1.5))
+        y = (H - ch) // 2
+        return [(m, y, cw, ch), (m + cw + g, y, cw, ch)]
+    if module == "duo_empile":
+        ch = (ih - g) // 2
+        return [(m, m, iw, ch), (m, m + ch + g, iw, ch)]
+    if module == "duo_decale":
+        w1 = int(iw * 0.64)
+        h1 = int(w1 * 1.25)
+        w2 = int(iw * 0.5)
+        h2 = int(w2 * 1.25)
+        return [(m, m, w1, h1), (W - m - w2, H - m - h2, w2, h2)]
+    if module == "trio":
+        h1 = int(ih * 0.46)
+        cw = (iw - g) // 2
+        h2 = ih - h1 - g
+        return [(m, m, iw, h1), (m, m + h1 + g, cw, h2), (m + cw + g, m + h1 + g, cw, h2)]
+    if module == "grille":
+        cw, ch = (iw - g) // 2, (ih - g) // 2
+        return [(m, m, cw, ch), (m + cw + g, m, cw, ch), (m, m + ch + g, cw, ch), (m + cw + g, m + ch + g, cw, ch)]
+    if module == "tirage":
+        return [(int(m * 1.4), int(m * 1.4), W - int(m * 2.8), H - int(m * 1.4) - int(m * 3))]
+    raise ValueError(f"Module inconnu : {module}")
+
+
+def rendre_module(sources_, sortie, module, ancrages=None, points=None, rotations=None,
+                  fond=None, marge=None, gouttiere=None, defauts_fond=None) -> dict:
+    """Pose plusieurs photos sur une diapositive 4:5 (JPEG 1080x1350). Renvoie un petit rapport."""
+    if module not in MODULES:
+        raise ValueError(f"Module inconnu : {module}")
+    if len(sources_) != MODULES[module]["photos"]:
+        raise ValueError(f"Le module {module} demande {MODULES[module]['photos']} photo(s)")
+    m = int(marge) if marge is not None else 64
+    g = int(gouttiere) if gouttiere is not None else 20
+    imgs = [tourner(ouvrir(s), (rotations or [0] * 9)[i] if i < len(rotations or []) else 0)
+            for i, s in enumerate(sources_)]
+    toile = Image.new("RGB", (LARGEUR, HAUTEUR), couleur_fond(fond, imgs[0], defauts_fond))
+    cadre = couleur_fond(fond, imgs[0], defauts_fond)
+    echelle_max = 0.0
+    for i, (img, (x, y, cw, ch)) in enumerate(zip(imgs, _cases(module, m, g))):
+        w, h = img.size
+        if module == "tirage":          # photo entière, sans recadrage
+            e = min(cw / w, ch / h)
+            nw, nh = max(1, int(w * e)), max(1, int(h * e))
+            toile.paste(img.resize((nw, nh), Image.LANCZOS), (x + (cw - nw) // 2, y + (ch - nh) // 2))
+            echelle_max = max(echelle_max, e)
+            continue
+        anc = (ancrages or [])[i] if i < len(ancrages or []) else "centre"
+        pt = (points or [])[i] if i < len(points or []) else None
+        boite = _fenetre(w, h, cw / ch, anc or "centre", pt)
+        morceau = img.crop(boite)
+        e = cw / morceau.width
+        echelle_max = max(echelle_max, e)
+        morceau = morceau.resize((cw, ch), Image.LANCZOS)
+        if module == "duo_decale" and i == 1:   # la petite photo chevauche la grande, avec un liseré
+            b = max(8, g // 2)
+            toile.paste(Image.new("RGB", (cw + 2 * b, ch + 2 * b), cadre), (x - b, y - b))
+        toile.paste(morceau, (x, y))
+    if echelle_max < 0.9:
+        toile = toile.filter(ImageFilter.UnsharpMask(radius=0.6, percent=35, threshold=2))
+    sortie = Path(sortie)
+    sortie.parent.mkdir(parents=True, exist_ok=True)
+    toile.save(sortie, "JPEG", quality=92, optimize=True, progressive=True)
+    return {"presentation": "module:" + module, "agrandissement": round(echelle_max, 3),
+            "sortie": str(sortie), "octets": sortie.stat().st_size}
+
+
 def vue_grille(source_4x5, sortie) -> Path:
     """Simule la vignette 3:4 du profil (rognée sur les côtés)."""
     img = ouvrir(source_4x5)

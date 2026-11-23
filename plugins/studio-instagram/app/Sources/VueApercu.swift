@@ -190,8 +190,6 @@ struct VueApercu: View {
             TelephoneGrilleProfil(contenu: contenu, couverture: post.couverture ?? contenu.medias.first,
                                   anciennes: grilleExistante(vue), nouveau: statut != "publie",
                                   nom: post.nom?.nonVide, sombre: telephoneSombre)
-        } else if contenu.format == .reel, let video = post.video {
-            TelephoneReelVideo(contenu: contenu, video: video, sombre: telephoneSombre)
         } else {
             TelephoneInstagram(contenu: contenu, sombre: telephoneSombre, index: $indexMedia)
         }
@@ -255,8 +253,6 @@ struct VueApercu: View {
 
     private func surTitre(_ vue: VueJour, _ post: Post) -> String {
         var morceaux: [String] = []
-        // Seule la première lettre en capitale : « Jeudi 19 novembre ».
-        if let d = vue.date_longue?.nonVide { morceaux.append(d.prefix(1).uppercased() + d.dropFirst()) }
         if let f = post.format_libelle?.nonVide { morceaux.append(f) }
         if let p = post.pilier_libelle?.nonVide { morceaux.append(p) }
         return morceaux.joined(separator: " · ")
@@ -579,7 +575,7 @@ struct VueApercu: View {
                 }
             }
             if !medias.isEmpty {
-                SectionRepliee(titre: post.format == "reel" ? "Images du Reel" : "Séquence", symbole: "square.stack",
+                SectionRepliee(titre: "Séquence", symbole: "square.stack",
                                resume: medias.count == 1 ? "1 image" : "\(medias.count) images") {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(medias) { m in
@@ -687,10 +683,10 @@ struct VueApercu: View {
             collaborateurs: post.collaborateurs ?? [],
             lieu: post.localisation?.nonVide,
             musique: musique,
-            medias: format == .reel ? [post.couverture ?? images.first].compactMap { $0 } : images,
+            medias: images,
             format: format,
             legende: post.legende ?? "",
-            date: FormatsApercu.dateCourte(vue.jour),
+            date: nil,
             heure: heureCreneau(post))
     }
 
@@ -993,152 +989,6 @@ private struct TelephoneGrilleProfil: View {
         .frame(width: cote, height: cote * 4 / 3)
         .clipped()
         .overlay(premiere ? Rectangle().strokeBorder(j.accent, lineWidth: 2) : nil)
-    }
-}
-
-/// Le Reel en vidéo 9:16, en boucle et muet (le son s'active d'un clic), avec l'habillage d'Instagram.
-private struct TelephoneReelVideo: View {
-    let contenu: ContenuInstagram
-    let video: String
-    let sombre: Bool
-    @Environment(\.jetons) private var j
-    @Local private var muet = true
-
-    var body: some View {
-        BoitierTelephone(sombre: sombre, heure: contenu.heure, barreClaire: true) {
-            ecran
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Aperçu du Reel en vidéo")
-    }
-
-    private var ecran: some View {
-        ZStack(alignment: .bottomLeading) {
-            Color.black
-            if let couverture = contenu.medias.first {
-                ImageLocale(chemin: couverture)
-            }
-            LecteurEnBoucle(url: URL(fileURLWithPath: video), muet: muet, enLecture: true)
-            LinearGradient(colors: [.clear, Color.black.opacity(0.55)], startPoint: UnitPoint(x: 0.5, y: 0.6), endPoint: .bottom)
-                .allowsHitTesting(false)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    ZStack {
-                        Circle().fill(j.accent)
-                        Text(contenu.initiales).font(.system(size: 11, weight: .semibold)).foregroundStyle(j.surAccent)
-                    }
-                    .frame(width: 28, height: 28)
-                    Text(contenu.compteCourt).font(.system(size: 14, weight: .semibold))
-                    Text("Suivre")
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.white.opacity(0.7)))
-                }
-                Text(contenu.legende).font(.system(size: 14)).lineLimit(2)
-                if let m = contenu.musique {
-                    Label(m, systemImage: "music.note").font(.system(size: 12)).lineLimit(1)
-                }
-            }
-            .foregroundStyle(.white)
-            .padding(.leading, 14)
-            .padding(.trailing, 72)
-            .padding(.bottom, 34)
-            .allowsHitTesting(false)
-            VStack(spacing: 22) {
-                Image(systemName: "heart")
-                Image(systemName: "bubble.right")
-                Image(systemName: "paperplane")
-                Image(systemName: "ellipsis")
-            }
-            .font(.system(size: 24))
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.trailing, 14)
-            .padding(.bottom, 44)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-            Button {
-                muet.toggle()
-            } label: {
-                Image(systemName: muet ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 30, height: 30)
-                    .background(Circle().fill(Color.black.opacity(0.45)))
-            }
-            .buttonStyle(.plain)
-            .help(muet ? "Activer le son" : "Couper le son")
-            .accessibilityLabel(muet ? "Activer le son" : "Couper le son")
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-            .padding(.top, 64)
-            .padding(.trailing, 14)
-        }
-        .frame(width: BoitierTelephone<EmptyView>.largeurEcran, height: BoitierTelephone<EmptyView>.hauteurEcran)
-    }
-}
-
-/// Lecture en boucle d'une vidéo locale, remplie (sans contrôles), en pause quand la vue disparaît.
-private struct LecteurEnBoucle: NSViewRepresentable {
-    let url: URL
-    let muet: Bool
-    let enLecture: Bool
-
-    final class Coordinateur {
-        var lecteur: AVQueuePlayer?
-        var boucle: AVPlayerLooper?
-        var url: URL?
-    }
-
-    final class VueLecteur: NSView {
-        let couche = AVPlayerLayer()
-        override init(frame: NSRect) {
-            super.init(frame: frame)
-            wantsLayer = true
-            couche.videoGravity = .resizeAspectFill
-            layer?.addSublayer(couche)
-        }
-        required init?(coder: NSCoder) { nil }
-        override func layout() {
-            super.layout()
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            couche.frame = bounds
-            CATransaction.commit()
-        }
-    }
-
-    func makeCoordinator() -> Coordinateur { Coordinateur() }
-
-    func makeNSView(context: Context) -> VueLecteur {
-        let vue = VueLecteur()
-        configurer(vue, context.coordinator)
-        return vue
-    }
-
-    func updateNSView(_ vue: VueLecteur, context: Context) {
-        if context.coordinator.url != url { configurer(vue, context.coordinator) }
-        context.coordinator.lecteur?.isMuted = muet
-        if enLecture { context.coordinator.lecteur?.play() } else { context.coordinator.lecteur?.pause() }
-    }
-
-    static func dismantleNSView(_ vue: VueLecteur, coordinator: Coordinateur) {
-        coordinator.lecteur?.pause()
-        coordinator.boucle = nil
-        coordinator.lecteur = nil
-        vue.couche.player = nil
-    }
-
-    private func configurer(_ vue: VueLecteur, _ c: Coordinateur) {
-        c.lecteur?.pause()
-        let lecteur = AVQueuePlayer()
-        let element = AVPlayerItem(url: url)
-        c.boucle = AVPlayerLooper(player: lecteur, templateItem: element)
-        c.lecteur = lecteur
-        c.url = url
-        lecteur.isMuted = muet
-        vue.couche.player = lecteur
-        if enLecture { lecteur.play() }
     }
 }
 

@@ -11,7 +11,7 @@ Fonctionne pour n'importe quel compte : à l'installation, l'app demande ton nom
 - Un Mac (macOS 14 ou plus récent) allumé, session ouverte, aux heures prévues.
 - Un abonnement Claude qui inclut Claude Code.
 - Les outils de développement d'Apple (gratuits) : l'installation les demande s'ils manquent (`xcode-select --install`).
-- Un compte Instagram professionnel ; pour la musique automatique sur les Reels, relié à une Page Facebook (`docs/connexion-instagram.md`).
+- Un compte Instagram professionnel (`docs/connexion-instagram.md`).
 - Les liens de partage des galeries Pic-Time (`docs/pic-time.md`).
 
 ## Installer

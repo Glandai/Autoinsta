@@ -74,12 +74,6 @@ def cmd_verifier(args):
         present = env.get("SUPABASE_URL") and env.get("SUPABASE_SERVICE_KEY")
         lignes.append(f"{ok if present else bloquant} Hébergement temporaire : Supabase {'configuré' if present else 'à configurer'}")
         probleme |= not present
-    try:
-        from .reel import ffmpeg
-        ffmpeg()
-        lignes.append(f"{ok} ffmpeg disponible (Reels)")
-    except ErreurStudio:
-        lignes.append("! ffmpeg absent : les Reels ne pourront pas être montés")
     print("\n".join(lignes))
     return 1 if probleme else 0
 
@@ -141,12 +135,9 @@ def main(argv=None):
     a.add_argument("jour")
     a.add_argument("statut")
 
-    a = sp.add_parser("musique", help="musique Instagram (API Audio)")
-    a.add_argument("action", choices=["chercher"])
+    a = sp.add_parser("musique", help="musique du post : tendances, recherche (avec extraits)")
+    a.add_argument("action", choices=["chercher", "tendances", "humeurs"])
     a.add_argument("requete", nargs="?")
-    a = sp.add_parser("reel", help="montage du Reel")
-    a.add_argument("action", choices=["monter", "infos"])
-    a.add_argument("jour")
 
     a = sp.add_parser("publier", help="publier un post approuvé")
     a.add_argument("jour")
@@ -277,13 +268,12 @@ def executer(args):
         from . import journee
         return sortie(journee.maj(args.jour, args.statut))
     if c == "musique":
-        from .instagram import Instagram
-        return sortie(Instagram().chercher_musique(args.requete))
-    if c == "reel":
-        from . import reel
-        if args.action == "monter":
-            return sortie(reel.monter(args.jour))
-        return sortie(reel.infos_video(config.dossier_jour(args.jour) / "rendu" / "reel.mp4"))
+        from . import musique
+        if args.action == "tendances":
+            return sortie(musique.tendances())
+        if args.action == "humeurs":
+            return sortie(musique.humeurs())
+        return sortie(musique.chercher(args.requete or ""))
     if c == "publier":
         from . import publication
         return sortie(publication.publier(args.jour, simulation=args.simulation))

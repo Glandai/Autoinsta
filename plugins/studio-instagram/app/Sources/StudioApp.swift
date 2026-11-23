@@ -508,49 +508,6 @@ struct ActiviteClaude: View {
 
 // MARK: - Jour affiché
 
-/// « ‹ Jeudi 19 novembre › » : jour précédent, choix dans la liste des journées, jour suivant.
-private struct SelecteurJour: View {
-    @EnvironmentObject var etat: EtatApp
-    @Environment(\.jetons) private var j
-
-    private var estAujourdhui: Bool { etat.jour == EtatApp.aujourdhuiISO() }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Button { NavigationJour.changer(etat, de: -1) } label: { Image(systemName: "chevron.left") }
-                .buttonStyle(BoutonRond(.transparente, diametre: 28))
-                .help("Jour précédent (⌘[)")
-                .accessibilityLabel("Jour précédent")
-            Menu {
-                Button("Aujourd'hui") { NavigationJour.aller(etat, a: EtatApp.aujourdhuiISO()) }
-                if !etat.jours.isEmpty { Divider() }
-                ForEach(etat.jours) { r in
-                    Button("\(NavigationJour.libelle(r.jour, longue: r.date_longue)) · \(r.titre ?? r.statut_libelle ?? "")") {
-                        NavigationJour.aller(etat, a: r.jour)
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Text(NavigationJour.libelle(etat.jour, longue: etat.vue?.jour == etat.jour ? etat.vue?.date_longue : nil))
-                        .font(j.police(.corpsFort))
-                        .foregroundStyle(j.texte)
-                    if estAujourdhui {
-                        Text("aujourd'hui").font(j.police(.legende)).foregroundStyle(j.texteSecondaire)
-                    }
-                }
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Changer de jour")
-            Button { NavigationJour.changer(etat, de: 1) } label: { Image(systemName: "chevron.right") }
-                .buttonStyle(BoutonRond(.transparente, diametre: 28))
-                .help("Jour suivant (⌘])")
-                .accessibilityLabel("Jour suivant")
-        }
-    }
-}
-
 enum NavigationJour {
     private static let iso: DateFormatter = {
         let f = DateFormatter()

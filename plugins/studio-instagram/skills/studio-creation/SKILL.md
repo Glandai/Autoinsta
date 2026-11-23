@@ -30,10 +30,8 @@ Charte : `config/charte.md` (sa version, modifiable dans l'app ; à défaut `pro
 
 ## 2. Construire
 
-- **Carrousel** : 6 à 10 images avec ouverture, progression, respirations, au moins une surprise, clôture. Pour chaque image : `plein_cadre` (avec `ancrage` ou `point_focal` qui protège le sujet) ou `marges` (fond `clair`, `sombre` ou `papier`). Les scans argentiques avec bord de pellicule et les images horizontales qui perdraient leur sens au recadrage vont sur fond. Jamais deux images trop semblables à la suite.
-- **Reel** : un plan de montage de 15 à 45 secondes à partir des clips ou des photos de la série (`presentation` par plan), puis `./studio reel monter <jour>`. Regarde `rendu/couverture.jpg`.
+- **Carrousel** : 6 à 10 images avec ouverture, progression, respirations, au moins une surprise, clôture. Pour chaque image : `plein_cadre` (avec `ancrage` ou `point_focal` qui protège le sujet) ou `marges` (fond `clair`, `sombre` ou `papier`). Les scans argentiques avec bord de pellicule et les images horizontales qui perdraient leur sens au recadrage vont sur fond. Jamais deux images trop semblables à la suite. Ajoute un à trois **modules** (plusieurs photos sur une page : `diptyque`, `duo_empile`, `duo_decale`, `trio`, `grille`, `tirage`) quand deux ou quatre images se répondent : `"module"` + `"photos": [ids]` à la place de `"presentation"`, jamais en ouverture.
 - **Musique** :
-  - Reel : `./studio musique chercher "<mots simples>"` (par exemple « piano ambient », « strings slow »), choisis une piste cohérente avec la direction sonore et la durée, puis remplis `musique` : `mode: api_reel`, `audio_id`, `titre`, `artiste`, `apercu_url`, `volume_musique` 100, `volume_video` entre 0 et 20 ;
   - carrousel : cherche aussi une piste, en `mode: a_ajouter_dans_l_app` (elle l'ajoutera dans Instagram après publication) ; un carrousel peut aussi rester sans musique (`aucune`) ;
   - si la recherche échoue (route Instagram, API indisponible), garde la direction sonore et mets une alerte courte.
 - **Légende** : relis le point 6 de la charte. Langue et voix : `config/compte.yaml`. Uniquement des faits venant des notes de la série et de ce qui se voit. Si `exemples_de_legendes` existe, prends leur ton. Crédits « Rôle @compte » après une ligne vide, puis hashtags précis.
@@ -43,7 +41,7 @@ Charte : `config/charte.md` (sa version, modifiable dans l'app ; à défaut `pro
 
 ## 3. Contrôler
 
-- `./studio rendre <jour>` (carrousel ou image). Regarde `rendu/01.jpg` et `rendu/grille.jpg` (la vignette 3:4 du profil) : le sujet doit rester lisible, rien d'important ne touche les bords. Regarde aussi chaque rendu en `plein_cadre` : rien d'essentiel coupé.
+- `./studio rendre <jour>`. Regarde `rendu/01.jpg` et `rendu/grille.jpg` (la vignette 3:4 du profil) : le sujet doit rester lisible, rien d'important ne touche les bords. Regarde aussi chaque rendu en `plein_cadre` : rien d'essentiel coupé.
 - `./studio valider <jour>`. Corrige toutes les erreurs ; pèse chaque avertissement. Trois tours au plus. Si une erreur reste impossible à corriger, explique-la dans `alertes` et mets `controle.conforme` à false.
 - `./studio apercu <jour>`.
 

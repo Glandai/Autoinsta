@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -429,8 +430,7 @@ struct VueAccueil: View {
     private var contenuInstagram: ContenuInstagram {
         let p = post
         let format = FormatInstagram(p?.format)
-        let chemins = format == .reel ? [p?.couverture].compactMap { $0 }
-            : (p?.medias ?? []).sorted { $0.ordre < $1.ordre }.compactMap { $0.image }
+        let chemins = (p?.medias ?? []).sorted { $0.ordre < $1.ordre }.compactMap { $0.image }
         var texte = p?.legende ?? ""
         let tags = hashtags.filter { !texte.contains($0) }
         if !tags.isEmpty { texte += (texte.isEmpty ? "" : "\n\n") + tags.joined(separator: " ") }
@@ -438,10 +438,9 @@ struct VueAccueil: View {
         if let m = p?.musique, m.mode != "aucune", let t = m.titre {
             musique = [t, m.artiste].compactMap { $0 }.joined(separator: " · ")
         }
-        let mots = (vue?.date_longue ?? "").split(separator: " ")
         return ContenuInstagram(compte: p?.compte?.nonVide ?? "ton.compte", collaborateurs: p?.collaborateurs ?? [],
                                 lieu: p?.localisation?.nonVide, musique: musique, medias: chemins, format: format,
-                                legende: texte, date: mots.count > 2 ? mots.dropFirst().joined(separator: " ") : nil,
+                                legende: texte, date: nil,
                                 heure: heure)
     }
 
@@ -492,6 +491,9 @@ struct VueAccueil: View {
             } else if v != nil {
                 Pastille("Prêt", symbole: "checkmark.circle.fill", ton: .succes)
             }
+            if let medias = post?.medias, !medias.isEmpty {
+                bloc("Mise en page") { CompositeurPages(medias: medias, actif: libre) }
+            }
             bloc("Légende") {
                 Text(post?.legende ?? "").typo(.corps).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
@@ -505,11 +507,8 @@ struct VueAccueil: View {
                     if let l = post?.localisation?.nonVide { Label(l, systemImage: "mappin").typo(.corps) }
                 }
             }
-            if let m = post?.musique, m.mode != "aucune", let t = m.titre {
-                bloc("Musique") {
-                    Text([t, m.artiste].compactMap { $0 }.joined(separator: " · ")).typo(.corps)
-                    if m.mode == "a_ajouter_dans_l_app" { Text("À ajouter dans Instagram après la publication.").typo(.legende) }
-                }
+            if post != nil {
+                bloc("Musique") { BlocMusique(musique: post?.musique, actif: libre) }
             }
             let alts = (post?.medias ?? []).sorted { $0.ordre < $1.ordre }.compactMap { $0.texte_alternatif?.nonVide }
             if !alts.isEmpty {
@@ -771,6 +770,412 @@ private struct BarreBrief: View {
                 .buttonStyle(BoutonRond(.sombre, diametre: 40))
                 .disabled(!actif || texte.nonVide == nil)
                 .accessibilityLabel("Envoyer")
+        }
+    }
+}
+
+
+// MARK: - Mise en page : plusieurs photos sur une même page
+
+/// Les pages du carrousel en vignettes. On en touche deux à quatre pour les réunir sur une seule page
+/// (côte à côte, l'une sur l'autre, trio, grille…), ou une seule pour changer sa présentation.
+/// Le moteur refait la mise en page tout de suite, sans Claude : les photos ne sont que recadrées.
+private struct CompositeurPages: View {
+    @EnvironmentObject var etat: EtatApp
+    @Environment(\.jetons) private var j
+    let medias: [MediaPost]
+    let actif: Bool
+    @Local private var choix: [Int] = []
+
+    private var pages: [MediaPost] { medias.sorted { $0.ordre < $1.ordre } }
+    private var choisies: [MediaPost] { pages.filter { choix.contains($0.ordre) } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) { ForEach(pages) { vignette($0) } }.padding(3)
+            }
+            options
+        }
+        .onChange(of: medias.map(\.ordre)) { _, _ in choix = [] }
+        .disabled(!actif || etat.modificationEnCours)
+        .opacity(etat.modificationEnCours ? 0.5 : 1)
+    }
+
+    private func vignette(_ m: MediaPost) -> some View {
+        let choisie = choix.contains(m.ordre)
+        return Button {
+            withAnimation(j.anim(.doux)) {
+                if choisie { choix.removeAll { $0 == m.ordre } } else { choix.append(m.ordre) }
+            }
+        } label: {
+            ImageLocale(chemin: m.image)
+                .frame(width: 48, height: 60)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(choisie ? j.accent : Color.primary.opacity(0.08), lineWidth: choisie ? 2.5 : 1))
+                .overlay(alignment: .topLeading) {
+                    Text("\(m.ordre)").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.black.opacity(0.55))).padding(3)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if m.nombrePhotos > 1 {
+                        Image(systemName: "square.grid.2x2.fill").font(.system(size: 9)).foregroundStyle(.white)
+                            .padding(3).background(Circle().fill(Color.black.opacity(0.55))).padding(3)
+                    }
+                }
+                .id(etat.versionImages)
+        }
+        .buttonStyle(.plain)
+        .help(choisie ? "Retirer de la sélection" : "Choisir cette page")
+        .accessibilityLabel("Page \(m.ordre)\(choisie ? ", choisie" : "")")
+    }
+
+    @ViewBuilder private var options: some View {
+        let c = choisies
+        if c.isEmpty {
+            Text("Touche deux à quatre pages pour les réunir sur une seule, ou une page pour changer sa présentation.")
+                .typo(.legende).fixedSize(horizontal: false, vertical: true)
+        } else if c.count == 1, let m = c.first, m.nombrePhotos > 1 {
+            pilules(ModulePage.pour(m.nombrePhotos).filter { $0.cle != m.module }.map { mod in
+                (mod.titre, mod.symbole, { reunir(mod.cle) })
+            } + [("Séparer", "rectangle.split.3x3", { separer(m) })])
+        } else if c.count == 1, let m = c.first {
+            pilules([("Plein cadre", "rectangle.portrait.fill", { presenter(m, "plein_cadre") }),
+                     ("Sur fond", "rectangle.inset.filled", { presenter(m, "marges") }),
+                     ("Tirage", "photo", { reunir("tirage") })])
+        } else if c.allSatisfy({ $0.nombrePhotos == 1 }), (2...4).contains(c.count) {
+            pilules(ModulePage.pour(c.count).map { mod in (mod.titre, mod.symbole, { reunir(mod.cle) }) })
+        } else {
+            Text(c.count > 4 ? "Quatre photos au plus sur une page." : "Choisis seulement des pages d'une seule photo.")
+                .typo(.legende)
+        }
+    }
+
+    private func pilules(_ liste: [(String, String, () -> Void)]) -> some View {
+        FlowPilules(liste: liste)
+    }
+
+    // MARK: Transformations
+
+    private func base(_ m: MediaPost) -> MediaModifie? {
+        guard let id = m.photo_id?.nonVide else { return nil }
+        if let mod = m.module?.nonVide, let ph = m.photos, !ph.isEmpty {
+            return MediaModifie(photo_id: id, module: mod, photos: ph)
+        }
+        return MediaModifie(photo_id: id)
+    }
+
+    private func photosDe(_ m: MediaPost) -> [String] {
+        if let ph = m.photos, !ph.isEmpty { return ph }
+        return [m.photo_id?.nonVide].compactMap { $0 }
+    }
+
+    private func reunir(_ module: String) {
+        let ordres = Set(choix)
+        let ids = choisies.flatMap { photosDe($0) }
+        guard let premier = ids.first else { return }
+        var res: [MediaModifie] = []
+        var place = false
+        for m in pages {
+            if ordres.contains(m.ordre) {
+                if !place { res.append(MediaModifie(photo_id: premier, module: module, photos: ids)); place = true }
+            } else if let b = base(m) {
+                res.append(b)
+            }
+        }
+        envoyer(res)
+    }
+
+    private func separer(_ m: MediaPost) {
+        var res: [MediaModifie] = []
+        for p in pages {
+            if p.ordre == m.ordre {
+                res += photosDe(p).map { MediaModifie(photo_id: $0) }
+            } else if let b = base(p) {
+                res.append(b)
+            }
+        }
+        envoyer(res)
+    }
+
+    private func presenter(_ m: MediaPost, _ presentation: String) {
+        let res = pages.compactMap { p -> MediaModifie? in
+            guard p.ordre == m.ordre, let id = photosDe(p).first else { return base(p) }
+            return MediaModifie(photo_id: id, presentation: presentation)
+        }
+        envoyer(res)
+    }
+
+    private func envoyer(_ res: [MediaModifie]) {
+        choix = []
+        Task { await etat.modifierPost(medias: res) }
+    }
+}
+
+/// Une rangée de petites pilules qui passe à la ligne.
+private struct FlowPilules: View {
+    let liste: [(String, String, () -> Void)]
+
+    var body: some View {
+        let lignes = stride(from: 0, to: liste.count, by: 2).map { Array(liste[$0..<min($0 + 2, liste.count)]) }
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(lignes.enumerated()), id: \.offset) { _, ligne in
+                HStack(spacing: 6) {
+                    ForEach(Array(ligne.enumerated()), id: \.offset) { _, e in
+                        Button(action: e.2) { Label(e.0, systemImage: e.1) }
+                            .buttonStyle(.pilule(.claire, taille: .petite))
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+// MARK: - Musique : choisir une piste, écouter un extrait
+
+/// Joue un extrait à la fois (30 secondes), dans tout l'app.
+@MainActor final class LecteurExtraits: ObservableObject {
+    static let partage = LecteurExtraits()
+    @Published private(set) var enCours: String? = nil
+    private var lecteur: AVPlayer?
+    private var fin: NSObjectProtocol?
+
+    func basculer(_ adresse: String?) {
+        guard let s = adresse, let url = URL(string: s) else { return }
+        if enCours == s { arreter(); return }
+        arreter()
+        let element = AVPlayerItem(url: url)
+        let p = AVPlayer(playerItem: element)
+        fin = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: element,
+                                                     queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.arreter() }
+        }
+        lecteur = p
+        enCours = s
+        p.play()
+    }
+
+    func arreter() {
+        lecteur?.pause()
+        lecteur = nil
+        if let f = fin { NotificationCenter.default.removeObserver(f) }
+        fin = nil
+        enCours = nil
+    }
+}
+
+/// Pochette ronde avec bouton lecture / pause par-dessus.
+private struct PochetteLecture: View {
+    let pochette: String?
+    let extrait: String?
+    var cote: CGFloat = 48
+    @ObservedObject private var lecteur = LecteurExtraits.partage
+
+    var body: some View {
+        let joue = extrait != nil && lecteur.enCours == extrait
+        Button { lecteur.basculer(extrait) } label: {
+            ZStack {
+                AsyncImage(url: pochette.flatMap(URL.init(string:))) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    LinearGradient(colors: [.pink.opacity(0.35), .purple.opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        .overlay(Image(systemName: "music.note").foregroundStyle(.white))
+                }
+                .frame(width: cote, height: cote)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                if extrait != nil {
+                    Image(systemName: joue ? "pause.fill" : "play.fill")
+                        .font(.system(size: cote * 0.26, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: cote * 0.56, height: cote * 0.56)
+                        .background(Circle().fill(Color.black.opacity(0.45)))
+                        .scaleEffect(joue ? 1.08 : 1)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: joue)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(extrait == nil)
+        .help(joue ? "Arrêter l'extrait" : "Écouter un extrait")
+        .accessibilityLabel(joue ? "Arrêter l'extrait" : "Écouter un extrait")
+    }
+}
+
+/// La musique du post dans l'aperçu : la piste choisie (avec extrait) ou le bouton pour en choisir une.
+private struct BlocMusique: View {
+    let musique: Musique?
+    let actif: Bool
+    @EnvironmentObject var etat: EtatApp
+    @Local private var ouvert = false
+
+    var body: some View {
+        Group {
+            if let m = musique, m.mode != "aucune", let t = m.titre {
+                HStack(spacing: 12) {
+                    PochetteLecture(pochette: m.pochette, extrait: m.apercu_url, cote: 44)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(t).typo(.corpsFort).lineLimit(1)
+                        Text(m.artiste ?? "").typo(.legende).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Button("Changer") { ouvert = true }
+                        .buttonStyle(.pilule(.claire, taille: .petite))
+                        .disabled(!actif)
+                }
+                Text("Tu l'ajouteras dans l'app Instagram en publiant : Instagram ne laisse pas une app ajouter la musique d'un carrousel.")
+                    .typo(.legende).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Button { ouvert = true } label: { Label("Choisir une musique", systemImage: "music.note") }
+                    .buttonStyle(.pilule(.claire, taille: .petite))
+                    .disabled(!actif)
+            }
+        }
+        .sheet(isPresented: $ouvert) {
+            ChoixMusique(actuelle: musique) { ouvert = false }
+                .environmentObject(etat)
+        }
+    }
+}
+
+/// La feuille de choix : tendances du moment, ambiances (romantique, piano…) et recherche, chaque piste avec
+/// son extrait. Un clic sur « Choisir » l'enregistre dans le post.
+private struct ChoixMusique: View {
+    let actuelle: Musique?
+    let fermer: () -> Void
+    @EnvironmentObject var etat: EtatApp
+    @Environment(\.jetons) private var j
+    @ObservedObject private var lecteur = LecteurExtraits.partage
+    @Local private var recherche = ""
+    @Local private var rubrique = "tendances"
+    @Local private var pistes: [PisteMusique] = []
+    @Local private var chargement = false
+    @Local private var enregistrement: String? = nil
+
+    private static let rubriques: [(String, String, String)] = [
+        ("tendances", "Tendances", "flame"), ("romantique", "Romantique", "heart"), ("piano", "Piano", "pianokeys"),
+        ("acoustique", "Acoustique", "guitars"), ("cinematique", "Cinématique", "film"), ("indie", "Indie folk", "leaf"),
+        ("jazz", "Jazz", "music.quarternote.3"), ("francais", "Chanson française", "quote.bubble"), ("joyeux", "Joyeux", "sun.max"),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Choisir une musique").typo(.titre2)
+                Spacer()
+                Button { lecteur.arreter(); fermer() } label: { Image(systemName: "xmark").font(.system(size: 12, weight: .bold)) }
+                    .buttonStyle(.plain)
+                    .frame(width: 28, height: 28)
+                    .verreLiquide(Circle(), interactif: true)
+                    .keyboardShortcut(.cancelAction)
+                    .help("Fermer")
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Un titre, un artiste, une ambiance…", text: $recherche)
+                    .textFieldStyle(.plain)
+                    .onSubmit {
+                        guard let q = recherche.nonVide else { return }
+                        rubrique = ""
+                        Task { await charger(q) }
+                    }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .verreLiquide(Capsule())
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Self.rubriques, id: \.0) { cle, titre, symbole in
+                        Button {
+                            rubrique = cle
+                            recherche = ""
+                            Task { await charger(cle) }
+                        } label: {
+                            Label(titre, systemImage: symbole)
+                                .font(.system(size: 12, weight: .semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .foregroundStyle(rubrique == cle ? j.surEncre : j.texte)
+                                .background(Capsule().fill(rubrique == cle ? j.encre : Color.primary.opacity(0.06)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            if rubrique == "tendances" {
+                Text("Les morceaux les plus écoutés en ce moment (classement Apple Music). Touche une pochette pour écouter un extrait.")
+                    .typo(.legende).fixedSize(horizontal: false, vertical: true)
+            }
+            ZStack {
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(pistes) { ligne($0) }
+                    }
+                    .padding(.vertical, 2)
+                }
+                if chargement {
+                    ProgressView().controlSize(.small)
+                } else if pistes.isEmpty {
+                    Text("Aucune piste trouvée.").typo(.legende)
+                }
+            }
+            .frame(maxHeight: .infinity)
+            HStack {
+                Button("Sans musique") { Task { await choisir(Musique(mode: "aucune")) } }
+                    .buttonStyle(.discret)
+                Spacer()
+                Text("À ajouter ensuite dans l'app Instagram, au moment de publier.").typo(.legende)
+            }
+        }
+        .padding(22)
+        .frame(width: 600, height: 660)
+        .task { await charger("tendances") }
+        .onDisappear { lecteur.arreter() }
+    }
+
+    private func ligne(_ p: PisteMusique) -> some View {
+        let choisie = actuelle?.titre == p.titre && actuelle?.artiste == p.artiste
+        return HStack(spacing: 12) {
+            PochetteLecture(pochette: p.pochette, extrait: p.apercu_url)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(p.titre ?? "Sans titre").typo(.corpsFort).lineLimit(1)
+                Text([p.artiste, p.source == "instagram" ? "Instagram" : nil].compactMap { $0 }.joined(separator: " · "))
+                    .typo(.legende).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if let d = p.duree { Text(d).typo(.legende).monospacedDigit() }
+            if choisie {
+                Label("Choisie", systemImage: "checkmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(j.accent)
+            } else {
+                Button(enregistrement == p.id ? "…" : "Choisir") { Task { await choisir(p.musique(), id: p.id) } }
+                    .buttonStyle(.pilule(.claire, taille: .petite))
+                    .disabled(enregistrement != nil)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(lecteur.enCours != nil && lecteur.enCours == p.apercu_url ? j.accent.opacity(0.10) : Color.clear))
+    }
+
+    private func charger(_ cle: String) async {
+        chargement = true
+        pistes = []
+        let res = cle == "tendances" ? await etat.tendancesMusique() : await etat.chercherMusique(cle)
+        withAnimation(j.anim(.doux)) { pistes = res }
+        chargement = false
+    }
+
+    private func choisir(_ m: Musique, id: String = "aucune") async {
+        enregistrement = id
+        let ok = await etat.modifierPost(musique: m)
+        enregistrement = nil
+        if ok {
+            lecteur.arreter()
+            fermer()
         }
     }
 }

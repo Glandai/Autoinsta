@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import sys
 import unittest
 from pathlib import Path
 
@@ -160,7 +161,56 @@ class TestMoteur(unittest.TestCase):
         self.assertEqual(a["mode"], "sombre")
         self.assertEqual(a["ecrans"], ["aujourdhui", "galeries", "statistiques", "reglages"])   # écrans essentiels fixes
         self.assertFalse(a["points"])                                                          # trame toujours coupée
+        f.write_text(json.dumps({"ambiance": "humeur:0.250,0.800"}))           # nuancier d'humeur
+        r, _ = self.studio("app", "enregistrer-apparence", str(f))
+        self.assertEqual(r["etat"], "enregistre")
+        a, _ = self.studio("app", "apparence")
+        self.assertEqual(a["ambiance"], "humeur:0.250,0.800")
+        f.write_text(json.dumps({"ambiance": "humeur:3,9"}))
+        r, _ = self.studio("app", "enregistrer-apparence", str(f))
+        self.assertEqual(r["etat"], "refuse")
         self.studio("app", "retablir-apparence")
+
+    def test_modele_selon_la_tache(self):
+        sys.path.insert(0, str(PLUGIN))
+        from moteur import claude
+        self.assertEqual(claude.modele_pour("creation", {}), "opus")
+        self.assertEqual(claude.modele_pour("idees", {}), "opus")
+        self.assertEqual(claude.modele_pour("retouche", {}), "sonnet")
+        self.assertEqual(claude.modele_pour("galerie", {}), "sonnet")
+        self.assertEqual(claude.modele_pour("galerie", {"modele": "opus"}), "opus")    # choix explicite
+
+    # ------------------------------------------------------------------ mise en page
+
+    def test_modules_plusieurs_photos(self):
+        r, code = self.studio("demo")
+        self.assertEqual(code, 0, r)
+        self.assertTrue(r["verdict"]["conforme"], r["verdict"])
+        self.assertTrue(any(d.get("photos") for d in r["rendu"]["details"]))      # la page en diptyque
+        jour = Path(r["apercu"]).parent.name
+        post = json.loads((self.dossier / "jours" / jour / "post.json").read_text())
+        ids = [m["photo_id"] for m in sorted(post["medias"], key=lambda m: m["ordre"]) if not m.get("module")]
+        f = self.tmp / "m.json"
+        # réunir les pages 2 et 3 sur une même page, côte à côte
+        f.write_text(json.dumps({"medias": [ids[0], {"photo_id": ids[1], "module": "diptyque", "photos": ids[1:3]}]
+                                 + ids[3:6]}))
+        r, code = self.studio("app", "modifier-post", jour, str(f))
+        self.assertEqual(code, 0, r)
+        post = json.loads((self.dossier / "jours" / jour / "post.json").read_text())
+        self.assertEqual(len(post["medias"]), 5)
+        self.assertEqual(post["medias"][1]["module"], "diptyque")
+        self.assertEqual(post["medias"][-1]["role"], "cloture")
+        self.assertTrue((self.dossier / "jours" / jour / "rendu" / "05.jpg").exists())
+        # un module au mauvais nombre de photos est refusé
+        f.write_text(json.dumps({"medias": [ids[0], {"photo_id": ids[1], "module": "grille", "photos": ids[1:3]}]}))
+        r, code = self.studio("app", "modifier-post", jour, str(f))
+        self.assertNotEqual(code, 0)
+        # séparer : chaque photo redevient une page
+        f.write_text(json.dumps({"medias": ids[:6]}))
+        r, code = self.studio("app", "modifier-post", jour, str(f))
+        post = json.loads((self.dossier / "jours" / jour / "post.json").read_text())
+        self.assertEqual(len(post["medias"]), 6)
+        self.assertFalse(any(m.get("module") for m in post["medias"]))
 
 
 if __name__ == "__main__":

@@ -3262,3 +3262,18 @@ private struct LabelLegende: LabelStyle {
         }
     }
 }
+
+
+// MARK: - Verre liquide (macOS 26) avec repli
+
+extension View {
+    /// Le verre liquide d'Apple (macOS 26 et plus) ; avant, une matière translucide de même forme.
+    @ViewBuilder func verreLiquide<S: Shape>(_ forme: S, interactif: Bool = false) -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(interactif ? .regular.interactive() : .regular, in: forme)
+        } else {
+            self.background(.ultraThinMaterial, in: forme)
+                .overlay(forme.stroke(Color.white.opacity(0.35), lineWidth: 0.5))
+        }
+    }
+}

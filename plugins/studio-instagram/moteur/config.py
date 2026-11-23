@@ -204,3 +204,11 @@ def historique() -> list:
 def enregistrer_historique(h: list) -> None:
     h = sorted(h, key=lambda p: (p.get("date", ""), p.get("heure", "")))
     ecrire_json(chemin("donnees", "historique.json"), h)
+
+
+def ids_media(m: dict) -> list:
+    """Identifiants des photos d'une diapositive : une seule, ou plusieurs pour un module."""
+    if isinstance(m.get("photos"), list) and m["photos"]:
+        return [str(x) for x in m["photos"]]
+    ident = m.get("photo_id") or m.get("fichier")
+    return [str(ident)] if ident else []

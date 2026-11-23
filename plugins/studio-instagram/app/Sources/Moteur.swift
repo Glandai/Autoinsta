@@ -89,7 +89,7 @@ enum TacheClaude: String, CaseIterable, Identifiable, Codable {
     var duJour: Bool { self == .matin || self == .idees || self == .creation || self == .retouche }
     /// `consigne` obligatoire (le texte de la retouche ou de la demande) ; facultative pour `idees`.
     var demandeConsigne: Bool { self == .retouche || self == .demande }
-    /// `consigne` possible (« plutôt des détails », « un Reel »…).
+    /// `consigne` possible (« plutôt des détails », « un diptyque »…).
     var accepteConsigne: Bool { demandeConsigne || self == .idees }
     /// `serie` obligatoire (l'identifiant de la galerie).
     var demandeSerie: Bool { self == .galerie }
@@ -240,7 +240,45 @@ final class EtatApp: ObservableObject {
         }
         RunLoop.main.add(t, forMode: .common)
         minuteur = t
-        Task { await toutCharger() }
+        Task {
+            await mettreAJourMoteurSiBesoin()
+            await toutCharger()
+        }
+    }
+
+    /// Version du moteur livrée dans l'app (.pkg) et version du moteur du studio.
+    private func versionMoteur(_ dossierMoteur: URL) -> String? {
+        (try? String(contentsOf: dossierMoteur.appendingPathComponent("moteur/VERSION"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines).nonVide
+    }
+
+    /// Après une mise à jour de l'app, le studio garde l'ancien moteur : l'app ne trouverait plus certaines
+    /// actions (« Action inconnue »). On le met donc à jour au lancement, avec le moteur livré dans l'app.
+    /// Réglages, photos, posts et mémoire ne sont pas touchés (installer.sh les préserve).
+    func mettreAJourMoteurSiBesoin() async {
+        guard let installeur = installeurEmbarque,
+              let livree = versionMoteur(installeur.deletingLastPathComponent()),
+              FileManager.default.isExecutableFile(atPath: dossier.appendingPathComponent("studio").path),
+              versionMoteur(dossier) != livree else { return }
+        let cible = dossier
+        let app = Bundle.main.bundlePath
+        message = "Mise à jour du studio (version \(livree))…"
+        let code: Int32 = await Task.detached(priority: .userInitiated) {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/bash")
+            p.arguments = [installeur.path, "--si-besoin", "--embarque=" + app, cible.path]
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+            p.environment = env
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            do { try p.run(); p.waitUntilExit(); return p.terminationStatus } catch { return -1 }
+        }.value
+        if code == 0 {
+            message = "Studio mis à jour (version \(livree))."
+        } else {
+            erreur = "Le studio n'a pas pu être mis à jour vers la version \(livree)."
+        }
     }
 
     func choisirDossier() {
@@ -1196,7 +1234,11 @@ final class EtatApp: ObservableObject {
         var liste: [MediaModifie] = []
         for m in medias.sorted(by: { $0.ordre < $1.ordre }) {
             guard let id = m.photo_id?.nonVide else { return nil }
-            liste.append(MediaModifie(photo_id: id))
+            if let mod = m.module?.nonVide, let ph = m.photos, !ph.isEmpty {
+                liste.append(MediaModifie(photo_id: id, module: mod, photos: ph))
+            } else {
+                liste.append(MediaModifie(photo_id: id))
+            }
         }
         return liste
     }
@@ -1256,7 +1298,19 @@ final class EtatApp: ObservableObject {
         }
     }
 
-    /// Pistes de la bibliothèque musicale d'Instagram (`./studio musique chercher`, route Facebook seulement).
+    /// Les morceaux les plus écoutés en ce moment (`./studio musique tendances`), avec un extrait de 30 secondes.
+    func tendancesMusique() async -> [PisteMusique] {
+        do {
+            return try await appeler(ListeSouple<PisteMusique>.self, ["musique", "tendances"]).elements
+                .filter { !$0.audio_id.isEmpty }
+        } catch {
+            erreur = error.localizedDescription
+            return []
+        }
+    }
+
+    /// Recherche de musique (`./studio musique chercher`) : bibliothèque Instagram si le compte y a accès
+    /// (route Facebook), sinon recherche iTunes avec extraits. Une ambiance (« piano », « romantique »…) marche aussi.
     /// Pour en choisir une : `modifierPost(musique: piste.musique())`.
     func chercherMusique(_ requete: String) async -> [PisteMusique] {
         var arguments = ["musique", "chercher"]
@@ -1411,7 +1465,7 @@ final class EtatApp: ObservableObject {
         return nil
     }
 
-    /// Copie le post prêt (images ou Reel, légende, textes alternatifs) dans
+    /// Copie le post prêt (images, légende, textes alternatifs) dans
     /// `~/Downloads/Studio Instagram/<jour> <titre>` et ouvre ce dossier dans le Finder. Rend son adresse, ou nil.
     func exporter(jour j: String? = nil) async -> URL? {
         let leJour = j ?? jour

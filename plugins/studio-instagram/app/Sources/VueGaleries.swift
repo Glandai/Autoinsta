@@ -1,11 +1,9 @@
 import AppKit
 import SwiftUI
 
-// Écran « Galeries » (DESIGN.md §4.7) : grand titre léger, pilule « Ajouter une galerie » (⇧⌘N : ⌘N reste le « + »),
-// grille de séries en cartes douces (mosaïque de vignettes, lieu, type et date, progression de la lecture par Claude,
-// photos fortes, état), actions (Analyser avec Claude, Modifier, Relire les photos, Retirer du studio…),
-// une seule pilule sombre par écran (celle de l'en-tête) : dans les cartes, pilule claire et lien discret,
-// fiche d'ajout ou d'édition en feuille, une étape à la fois.
+// Écran « Galeries » : sobre, la photo d'abord. Chaque série est une mosaïque arrondie avec une étiquette de verre
+// (état ou lecture en cours), son nom et une ligne d'infos. Un clic ouvre le post fait avec ces photos ; les autres
+// actions (Modifier, Relire les photos, Retirer) sont dans le bouton « … » de verre et le menu contextuel.
 
 struct VueGaleries: View {
     @EnvironmentObject var etat: EtatApp
@@ -18,7 +16,7 @@ struct VueGaleries: View {
         ScrollView {
             VStack(alignment: .leading, spacing: j.esp.sections) {
                 EnTeteEcran(surTitre: "Le studio", titre: "Galeries",
-                            chapo: "Chaque galerie est une série : un mariage, un shooting. Claude ne raconte que ce qui est écrit ici.") {
+                            chapo: "Touche une galerie pour revoir son post.") {
                     if !etat.galeries.isEmpty {
                         Button { ouvrir(Galerie.nouvelle(), nouvelle: true) } label: {
                             Label("Ajouter une galerie", systemImage: "plus")
@@ -62,8 +60,8 @@ struct VueGaleries: View {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(j.esp.sections)
             }
         } else {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 330), spacing: j.esp.gouttiere, alignment: .top)],
-                      alignment: .leading, spacing: j.esp.gouttiere) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 270), spacing: 28, alignment: .top)],
+                      alignment: .leading, spacing: 34) {
                 ForEach(Array(etat.galeries.enumerated()), id: \.element.id) { i, g in
                     CarteGalerie(galerie: g,
                                  modifier: { ouvrir(g, nouvelle: false) },
@@ -137,99 +135,78 @@ private struct CarteGalerie: View {
     }
 
     var body: some View {
-        Carte(style: .cliquable) {
-            VStack(alignment: .leading, spacing: j.esp.blocs) {
-                MosaiqueGalerie(chemins: vignettes, symbole: GalerieTexte.symboleType(galerie.type))
-                    .contentShape(Rectangle())
-                    .onTapGesture { Task { await etat.ouvrirPostDeSerie(galerie.id) } }
-                    .help("Voir l'aperçu du post fait avec ces photos")
-                enTete
-                progression
-                pastilles
-                if let e = activite {
-                    CarteActiviteClaude(execution: e, compacte: true, cadre: false,
-                                        arreter: { Task { await etat.annulerClaude() } })
-                        .padding(.top, 2)
-                        .transition(j.transition(.apparition))
-                } else {
-                    actions
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            MosaiqueGalerie(chemins: vignettes, symbole: GalerieTexte.symboleType(galerie.type))
+                .overlay(alignment: .bottomLeading) { etiquette.padding(12) }
+                .overlay(alignment: .topTrailing) { boutonMenu.padding(10) }
+                .scaleEffect(survol ? 1.012 : 1)
+                .shadow(color: .black.opacity(survol ? 0.16 : 0.07), radius: survol ? 20 : 10, y: survol ? 10 : 4)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(GalerieTexte.titre(galerie))
+                    .font(.jakarta(15, graisse: 600))
+                    .foregroundStyle(j.texte)
+                    .lineLimit(1)
+                Text([GalerieTexte.sousTitre(galerie), photos > 0 ? "\(photos) photos" : nil]
+                        .compactMap { $0?.nonVide }.joined(separator: " · "))
+                    .typo(.legende)
+                    .lineLimit(1)
             }
-            .animation(j.anim(.doux), value: activite?.etat)
+            .padding(.horizontal, 4)
+            if let e = activite {
+                CarteActiviteClaude(execution: e, compacte: true, cadre: false,
+                                    arreter: { Task { await etat.annulerClaude() } })
+                    .transition(j.transition(.apparition))
+            }
         }
-        .onHover { s in withAnimation(j.anim(.survol)) { survol = s } }
-        .onTapGesture(count: 2) { modifier() }
+        .animation(j.anim(.survol), value: survol)
+        .animation(j.anim(.doux), value: activite?.etat)
+        .contentShape(Rectangle())
+        .onTapGesture { Task { await etat.ouvrirPostDeSerie(galerie.id) } }
+        .onHover { s in survol = s }
         .contextMenu { menuActions }
         .task(id: "\(galerie.id)·\(photos)·\(lues)") {
             let lus = await LecteurVignettes.lire(dossier: etat.dossier, serie: galerie.id)
             if lus != vignettes { withAnimation(j.anim(.doux)) { vignettes = lus } }
         }
+        .help("Ouvrir le post fait avec ces photos")
         .accessibilityElement(children: .contain)
         .accessibilityLabel(GalerieTexte.titre(galerie))
+        .accessibilityAddTraits(.isButton)
     }
 
-    private var enTete: some View {
-        HStack(alignment: .top, spacing: j.esp.pile) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(GalerieTexte.titre(galerie))
-                    .typo(.titre2)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(GalerieTexte.sousTitre(galerie)).typo(.legende).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            Menu { menuActions } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(j.texte)
-                    .frame(width: 32, height: 32)
-                    .background(Circle().fill(survol ? j.surfaceElevee : Color.clear))
-                    .contentShape(Circle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .opacity(survol ? 1 : 0)
-            .allowsHitTesting(survol)
-            .help("Plus d'actions")
-            .accessibilityLabel("Plus d'actions")
-        }
+    /// Une seule étiquette de verre sur la photo : la lecture en cours, sinon l'état de la série.
+    private var etiquette: some View {
+        let e = GalerieTexte.etat(galerie)
+        let texte = resteALire ? "\(lues) / \(photos) lues" : e.texte
+        let symbole = resteALire ? "sparkles" : e.symbole
+        return Label(texte, systemImage: symbole)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .verreLiquide(Capsule())
     }
 
-    @ViewBuilder private var progression: some View {
-        if photos > 0 {
-            VStack(alignment: .leading, spacing: 6) {
-                BarreLecture(fraction: Double(lues) / Double(max(photos, 1)))
-                    .frame(height: 5)
-                Text("\(lues) sur \(photos) photos lues par Claude").typo(.legende)
-            }
-            .accessibilityElement(children: .combine)
-        } else {
-            Text("Photos pas encore lues : « Relire les photos » les fait apparaître.").typo(.legende)
+    private var boutonMenu: some View {
+        Menu { menuActions } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 30, height: 30)
+                .verreLiquide(Circle(), interactif: true)
         }
-    }
-
-    private var pastilles: some View {
-        HStack(spacing: 6) {
-            let e = GalerieTexte.etat(galerie)
-            Pastille(e.texte, symbole: e.symbole, ton: e.ton)
-            if resteALire {
-                Pastille("À analyser", symbole: "exclamationmark.circle.fill", ton: .aToi)
-            }
-        }
-    }
-
-    private var actions: some View {
-        HStack(spacing: 8) {
-            Button(action: modifier) { Label("Modifier", systemImage: "pencil.line") }
-                .buttonStyle(.discret)
-                .fixedSize()
-            Spacer(minLength: 0)
-        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .opacity(survol ? 1 : 0)
+        .allowsHitTesting(survol)
+        .help("Plus d'actions")
+        .accessibilityLabel("Plus d'actions")
     }
 
     @ViewBuilder private var menuActions: some View {
-        Button { modifier() } label: { Label("Modifier", systemImage: "pencil.line") }
+        Button { Task { await etat.ouvrirPostDeSerie(galerie.id) } } label: { Label("Voir le post", systemImage: "eye") }
+        Button { modifier() } label: { Label("Modifier la galerie", systemImage: "pencil.line") }
         Button { Task { await etat.indexerGalerie(galerie.id) } } label: {
             Label("Relire les photos", systemImage: "arrow.triangle.2.circlepath")
         }
@@ -239,26 +216,7 @@ private struct CarteGalerie: View {
     }
 }
 
-/// Barre fine d'accent : la part des photos lues par Claude.
-private struct BarreLecture: View {
-    let fraction: Double
-    @Environment(\.jetons) private var j
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(j.accent.opacity(0.16))
-                Capsule()
-                    .fill(j.accent)
-                    .frame(width: max(fraction > 0 ? 5 : 0, geo.size.width * min(1, max(0, fraction))))
-            }
-        }
-        .animation(j.anim(.compteur), value: fraction)
-        .accessibilityHidden(true)
-    }
-}
-
-/// Mosaïque 3:2 : une grande vignette et deux petites (ou ce qu'il y a), coins `rayons.photo`.
+/// Mosaïque 4:3 : une grande vignette et deux petites (ou ce qu'il y a), coins très arrondis.
 private struct MosaiqueGalerie: View {
     let chemins: [String]
     let symbole: String
@@ -296,8 +254,8 @@ private struct MosaiqueGalerie: View {
             .frame(width: w, height: h)
             .clipped()
         }
-        .aspectRatio(3 / 2, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: j.rayons.photo, style: .continuous))
+        .aspectRatio(4 / 3, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .accessibilityHidden(true)
     }
 

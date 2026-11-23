@@ -922,19 +922,6 @@ private struct RubriquePublication: View {
                     ligneJour(jour)
                 }
             }
-            Carte(titre: "Formats", symbole: "play.rectangle") {
-                LigneReglage("Part de Reels", aide: "Le reste en carrousels et en images.") {
-                    HStack(spacing: 12) {
-                        Slider(value: $r.publication.part_reels, in: 0...0.6, step: 0.05)
-                            .frame(width: 180)
-                            .accessibilityLabel("Part de Reels")
-                        Text("\(Int((r.publication.part_reels * 100).rounded())) %")
-                            .font(.jakarta(14, graisse: 600))
-                            .monospacedDigit()
-                            .frame(width: 44, alignment: .trailing)
-                    }
-                }
-            }
             Carte(titre: "Mise en page des images", symbole: "square.on.square") {
                 LigneReglage("Marge autour des images sur fond", aide: "Pour les photos présentées avec des marges.") {
                     ReglageNombre(valeur: $r.mise_en_page.marge_px, plage: 0...200, pas: 8, unite: "px", libelle: "Marge")
@@ -1064,7 +1051,7 @@ private struct RubriqueClaude: View {
     @Local private var confirmerDeconnexion = false
 
     private static let modeles = [
-        OptionReglage(valeur: "", titre: "Par défaut"),
+        OptionReglage(valeur: "", titre: "Automatique"),
         OptionReglage(valeur: "opus", titre: "Opus"),
         OptionReglage(valeur: "sonnet", titre: "Sonnet"),
         OptionReglage(valeur: "haiku", titre: "Haiku"),
@@ -1206,7 +1193,7 @@ private struct RubriqueClaude: View {
     private var carteModele: some View {
         Carte(titre: "Sa façon de travailler", symbole: "dial.medium") {
             // Titre au-dessus, pilules dessous : les deux rangées partent du même bord.
-            choixEmpile("Modèle", aide: "Opus réfléchit davantage, Sonnet va plus vite. « Par défaut » suit Claude Code.") {
+            choixEmpile("Modèle", aide: "« Automatique » : Opus pour créer les posts et les idées, Sonnet (plus rapide et plus économe) pour les retouches, les galeries, le bilan et la charte.") {
                 ChoixEnPilules(options: optionsModele, selection: reglagesClaude.modele)
             }
             Filet()
@@ -1498,7 +1485,7 @@ private struct RubriqueInstagram: View {
 
     private var carteReglages: some View {
         Carte(titre: "Publication", symbole: "paperplane") {
-            LigneReglage("Route utilisée", aide: "Avec Facebook, les Reels reçoivent leur musique automatiquement.") {
+            LigneReglage("Route utilisée", aide: "Les deux routes publient les carrousels de la même façon.") {
                 ChoixEnPilules(options: [OptionReglage(valeur: "facebook", titre: "Facebook"),
                                          OptionReglage(valeur: "instagram", titre: "Instagram seul")],
                                selection: $r.instagram.api)
@@ -1773,9 +1760,6 @@ private struct RubriqueAvance: View {
                               valeur: (s.hebergement_pret ?? false) ? "Prête (\(s.hebergement == "supabase" ? "Supabase" : "Cloudflare"))" : "À installer",
                               couleur: (s.hebergement_pret ?? false) ? j.succes : j.alerte)
                     Filet()
-                    LigneInfo(cle: "Montage des Reels", valeur: (s.ffmpeg ?? false) ? "Prêt" : "Outil de montage manquant",
-                              couleur: (s.ffmpeg ?? false) ? j.succes : j.alerte)
-                    Filet()
                     LigneInfo(cle: "Galeries et publications", valeur: "\(s.galeries ?? 0) galeries, \(s.publications ?? 0) publications")
                     if let manques = s.a_completer, !manques.isEmpty {
                         Filet()
@@ -1946,17 +1930,9 @@ private struct RubriqueApparence: View {
 
     private var carteAmbiance: some View {
         Carte(titre: "Ambiance", symbole: "paintpalette") {
-            Text("Les couleurs du fond de l'app.").typo(.legende)
-            // Les cinq sur une seule rangée, quelle que soit la largeur.
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 84), spacing: 10, alignment: .top), count: 5),
-                      alignment: .leading, spacing: 14) {
-                ForEach(Ambiance.allCases) { a in
-                    VignetteAmbiance(ambiance: a, apparence: brouillon, choisie: brouillon.ambiance == a.rawValue) {
-                        changer { $0.ambiance = a.rawValue }
-                    }
-                }
-            }
-            .padding(.top, 4)
+            Text("Fais glisser le curseur : les couleurs du fond suivent ton humeur.").typo(.legende)
+            NuancierHumeur(valeur: brouillon.ambiance) { v in changer { $0.ambiance = v } }
+                .padding(.top, 4)
         }
     }
 
@@ -2060,53 +2036,81 @@ private struct RubriqueApparence: View {
     }
 }
 
-/// Une ambiance en vignette : son fond qui dérive lentement, son nom et sa phrase ; choisie = anneau d'encre.
-private struct VignetteAmbiance: View {
-    let ambiance: Ambiance
-    let apparence: Apparence
-    let choisie: Bool
-    let action: () -> Void
+/// Le nuancier d'humeur : un cadre de couleurs pastel (quatre ambiances aux coins, mélangées en continu) et un
+/// curseur qu'on fait glisser. L'aperçu suit en direct ; l'enregistrement part quand le geste s'arrête.
+private struct NuancierHumeur: View {
+    let valeur: String
+    let changer: (String) -> Void
     @Environment(\.jetons) private var j
-    @Local private var survol = false
+    @Local private var glisse: CGPoint? = nil
+    @Local private var appui = false
+
+    private func pastel(_ a: Ambiance) -> Color {
+        let d = a.definition(sombre: false)
+        return d.taches[0].melange(d.taches[1], 0.35).melange(.blanc, 0.18).couleur
+    }
+
+    private var point: CGPoint {
+        if let g = glisse { return g }
+        let p = Humeur.position(valeur)
+        return CGPoint(x: p.x, y: p.y)
+    }
 
     var body: some View {
-        var variante = apparence
-        variante.ambiance = ambiance.rawValue
-        let forme = RoundedRectangle(cornerRadius: j.rayons.carte * 0.75, style: .continuous)
-        return Button(action: action) {
-            VStack(alignment: .leading, spacing: 6) {
-                ApercuTheme(apparence: variante, schema: j.schema) {
-                    FondAmbiance(anime: false)
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let p = point
+            let couleur = DefinitionAmbiance.melange(x: p.x, y: p.y, sombre: false).taches[0].melange(.blanc, 0.1).couleur
+            ZStack(alignment: .topLeading) {
+                // Mélange bilinéaire exact : rangée du bas, puis rangée du haut qui s'efface vers le bas.
+                LinearGradient(colors: [pastel(.provence), pastel(.sauge)], startPoint: .leading, endPoint: .trailing)
+                LinearGradient(colors: [pastel(.aube), pastel(.lavande)], startPoint: .leading, endPoint: .trailing)
+                    .mask(LinearGradient(colors: [.white, .white.opacity(0)], startPoint: .top, endPoint: .bottom))
+                // Un voile de lumière pour la douceur.
+                RadialGradient(colors: [.white.opacity(0.35), .clear], center: .center, startRadius: 0, endRadius: max(w, h) * 0.6)
+                ForEach(Array(zip(Humeur.coins, [Alignment.topLeading, .topTrailing, .bottomLeading, .bottomTrailing])),
+                        id: \.0) { a, coin in
+                    Text(a.nom)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.black.opacity(0.42))
+                        .padding(10)
+                        .frame(width: w, height: h, alignment: coin)
                 }
-                .frame(height: 80)
-                .frame(maxWidth: .infinity)
-                .clipShape(forme)
-                .overlay(forme.strokeBorder(choisie ? j.encre : j.trait, lineWidth: choisie ? 2 : 1))
-                .overlay(alignment: .topTrailing) {
-                    if choisie {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundStyle(j.surEncre, j.encre)
-                            .padding(6)
-                            .transition(j.transition(.apparition))
-                    }
-                }
-                .ombre(survol || choisie ? .carte : .repos)
-                .offset(y: survol && j.deplacements ? -2 : 0)
-                Text(ambiance.nom).typo(.corpsFort)
-                Text(ambiance.description)
-                    .typo(.legende)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
+                Circle()
+                    .fill(couleur)
+                    .overlay(Circle().strokeBorder(.white, lineWidth: 3))
+                    .frame(width: 30, height: 30)
+                    .shadow(color: .black.opacity(0.22), radius: appui ? 10 : 5, y: appui ? 5 : 2)
+                    .scaleEffect(appui ? 1.25 : 1)
+                    .position(x: p.x * w, y: p.y * h)
+                    .animation(.spring(response: 0.32, dampingFraction: 0.72), value: appui)
             }
+            .frame(width: w, height: h)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.white.opacity(0.55), lineWidth: 1))
             .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { g in
+                    let n = CGPoint(x: min(1, max(0, g.location.x / max(w, 1))), y: min(1, max(0, g.location.y / max(h, 1))))
+                    if !appui { appui = true }
+                    withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.86)) { glisse = n }
+                    changer(Humeur.texte(x: n.x, y: n.y))
+                }
+                .onEnded { _ in
+                    appui = false
+                    glisse = nil
+                })
+            .onHover { dedans in if dedans { NSCursor.crosshair.push() } else { NSCursor.pop() } }
         }
-        .buttonStyle(.plain)
-        .onHover { survol = $0 }
-        .animation(j.anim(.survol), value: survol)
-        .animation(j.anim(.selection), value: choisie)
-        .accessibilityLabel("\(ambiance.nom). \(ambiance.description)")
-        .accessibilityAddTraits(choisie ? .isSelected : [])
+        .frame(height: 190)
+        .accessibilityElement()
+        .accessibilityLabel("Nuancier d'ambiance")
+        .accessibilityValue(String(format: "%d %% vers la droite, %d %% vers le bas", Int(point.x * 100), Int(point.y * 100)))
+        .accessibilityAdjustableAction { sens in
+            let p = point
+            let x = sens == .increment ? p.x + 0.1 : p.x - 0.1
+            changer(Humeur.texte(x: x, y: p.y))
+        }
     }
 }
 

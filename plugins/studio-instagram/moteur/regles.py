@@ -19,7 +19,7 @@ VALEURS = {
     "sujet": ["couple", "mariee", "marie", "invites", "lieu", "objet", "nature", "autre"],
 }
 LONGUEURS = ["silencieuse", "courte", "recit"]
-FORMATS = ["carrousel", "image", "reel"]
+FORMATS = ["carrousel", "image"]
 ROLES = ["ouverture", "progression", "respiration", "surprise", "cloture"]
 PRESENTATIONS = ["plein_cadre", "marges"]
 ANCRAGES = ["centre", "haut", "bas", "gauche", "droite"]
@@ -244,15 +244,6 @@ def etat_feed(hist: list = None, cfg: dict = None) -> dict:
     fenetre10 = hist[-9:]
     vus = {p.get("pilier") for p in fenetre10}
     c["piliers_absents_recemment"] = [x for x in PILIERS if x not in vus]
-    reels = [i for i, p in enumerate(reversed(hist)) if p.get("format") == "reel"]
-    ecart = reels[0] if reels else 99
-    ratio = float((cfg.get("publication") or {}).get("part_reels", 0.25))
-    if ecart == 0:
-        c["reel"] = "a_eviter (le dernier post est un Reel)"
-    elif ecart + 1 >= round(1 / max(ratio, 0.05)):
-        c["reel"] = "conseille"
-    else:
-        c["reel"] = "possible"
     nb = sum(1 for p in hist[-10:] if (p.get("fiche_feed") or {}).get("tonalite") == "nb")
     c["equilibre_10_derniers"] = {"nb": nb, "couleur": len(hist[-10:]) - nb}
     return {
@@ -318,12 +309,10 @@ def valider_post(post: dict, hist: list = None, cfg: dict = None, catalogue: dic
     nb = sum(1 for p in fen10 if (p.get("fiche_feed") or {}).get("tonalite") == "nb")
     if len(fen10) >= 8 and not (0.3 <= nb / len(fen10) <= 0.7):
         A.append(f"Équilibre N&B / couleur à surveiller ({nb} N&B sur {len(fen10)})")
-    if fmt == "reel" and precedent and precedent.get("format") == "reel":
-        A.append("Deux Reels de suite")
 
     # ---- médias
     medias = post.get("medias") or []
-    deja = {m.get("photo_id") or m.get("fichier") for h in hist for m in h.get("medias", [])}
+    deja = {x for h in hist for m in h.get("medias", []) for x in config.ids_media(m)}
     deja |= set(cfg.get("images_deja_publiees") or [])
     if fmt == "carrousel":
         if len(medias) < 2:
@@ -336,22 +325,30 @@ def valider_post(post: dict, hist: list = None, cfg: dict = None, catalogue: dic
             A.append(f"Carrousel court ({len(medias)} images) : à justifier dans l'intention")
     if fmt == "image" and len(medias) != 1:
         E.append("Le format image demande exactement 1 média")
-    if fmt == "reel":
-        r = post.get("reel") or {}
-        if not medias and not r.get("plan_de_montage"):
-            E.append("Reel sans vidéo ni plan de montage")
-        for plan in r.get("plan_de_montage") or []:
-            if str(plan.get("fichier")) in deja:
-                E.append(f"Plan {plan.get('ordre')} du Reel : image déjà publiée ({plan.get('fichier')})")
-        duree = r.get("duree_totale_s") or 0
-        if duree and not 15 <= duree <= 45:
-            A.append(f"Durée de Reel inhabituelle : {duree} s (15 à 45 s conseillées)")
-        if not r.get("direction_sonore"):
-            E.append("Reel sans direction sonore")
     vues = set()
     par_id = {p["id"]: p for p in (catalogue or {}).get("photos", [])}
     empreinte_prec = None
+    from .images import MODULES
     for i, m in enumerate(sorted(medias, key=lambda x: x.get("ordre", 0))):
+        if m.get("module"):
+            ids = config.ids_media(m)
+            mod = MODULES.get(m["module"])
+            if not mod:
+                E.append(f"Média {i + 1} : module inconnu ({m['module']}), choisir parmi {', '.join(MODULES)}")
+            elif len(ids) != mod["photos"]:
+                E.append(f"Média {i + 1} : le module {m['module']} demande {mod['photos']} photo(s), {len(ids)} fournie(s)")
+            for x in ids:
+                if x in vues:
+                    E.append(f"Média {i + 1} : photo {x} en double")
+                vues.add(x)
+                if x in deja:
+                    E.append(f"Média {i + 1} : photo déjà publiée ({x})")
+            if m.get("role") not in ROLES:
+                E.append(f"Média {i + 1} : rôle invalide ({m.get('role')})")
+            if not m.get("texte_alternatif"):
+                E.append(f"Média {i + 1} : texte alternatif manquant")
+            empreinte_prec = None
+            continue
         ident = str(m.get("photo_id") or m.get("fichier"))
         est_video = str(m.get("type", "")).lower() == "video" or ident.endswith(".mp4")
         if ident in vues:
@@ -428,8 +425,6 @@ def valider_post(post: dict, hist: list = None, cfg: dict = None, catalogue: dic
     mus = post.get("musique") or {}
     if mus.get("mode") and mus["mode"] not in MODES_MUSIQUE:
         E.append(f"Mode musique inconnu : {mus.get('mode')}")
-    if fmt == "reel" and mus.get("mode") == "a_ajouter_dans_l_app":
-        A.append("Reel : la musique peut être ajoutée automatiquement (mode api_reel)")
 
     # ---- créneau
     if post.get("date"):

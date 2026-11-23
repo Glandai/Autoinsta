@@ -149,8 +149,6 @@ def _phrase_contraintes(etat: dict) -> str:
                         f"couverture {f.get('tonalite')} · {f.get('luminosite')} · {f.get('plan')} · {f.get('sujet')}.")
     if c.get("tonalite_imposee"):
         morceaux.append(f"La prochaine couverture sera en {'noir et blanc' if c['tonalite_imposee'] == 'nb' else 'couleur'}.")
-    if c.get("reel") == "conseille":
-        morceaux.append("Un Reel serait bienvenu.")
     return " ".join(morceaux)
 
 
@@ -194,9 +192,7 @@ def page_idees(jour: str) -> Path:
             o.append("<div class=\"vignettes\">" + "".join(f"<img src=\"{u}\" alt=\"\">" for u in vign) + "</div>")
         o.append("<div class=\"corps\"><div class=\"etiquettes\">")
         fmt = LIBELLE_FORMAT.get(idee.get("format"), idee.get("format", ""))
-        if idee.get("format") == "reel" and idee.get("duree_s"):
-            fmt += f" · {idee['duree_s']} s"
-        elif idee.get("nb_medias"):
+        if idee.get("nb_medias"):
             fmt += f" · {idee['nb_medias']} photos"
         o.append(f"<span class=\"etiquette forte\">{E(fmt)}</span>")
         o.append(f"<span class=\"etiquette\">{E(LIBELLE_PILIER.get(idee.get('pilier'), idee.get('pilier', '')))}</span>")
@@ -213,7 +209,7 @@ def page_idees(jour: str) -> Path:
         o.append("</div></article>")
     o.append("<article class=\"idee libre\"><div class=\"num\">+</div><h2>Ton idée</h2>"
              "<p class=\"pitch\">Écris-la simplement dans Claude : « les mains pendant les discours », "
-             "« le Reel de Barcelone », « plus de noir et blanc cette semaine »… Le studio s'occupe du reste.</p></article>")
+             "« le carrousel de Barcelone », « plus de noir et blanc cette semaine »… Le studio s'occupe du reste.</p></article>")
     o.append("</main><footer class=\"pied\">Réponds dans Claude avec le numéro de l'idée ou ta propre idée. "
              "Rien n'est publié sans ton accord.</footer></div></body></html>")
     sortie = d / "idees.html"
@@ -264,19 +260,11 @@ def page_apercu(jour: str, verdict: dict = None) -> Path:
              f"<div><div class=\"compte\">{ligne_compte}</div>"
              f"<div class=\"lieu\">{E(post.get('localisation') or '')}</div></div></div>")
     o.append("<div class=\"piste\">")
-    if post.get("format") == "reel":
-        video = rendu / "reel.mp4"
-        couverture = rendu / "couverture.jpg"
-        affiche = images.data_uri(couverture, 540) if couverture.exists() else ""
-        o.append(f"<figure class=\"diapo\"><video controls playsinline preload=\"metadata\" poster=\"{affiche}\" "
-                 f"src=\"rendu/reel.mp4\"></video></figure>" if video.exists() else
-                 "<figure class=\"diapo\"><div style=\"color:#fff;padding:40px\">Le Reel n'est pas encore monté.</div></figure>")
-    else:
-        for i, m in enumerate(medias, 1):
-            f = rendu / f"{i:02d}.jpg"
-            uri = images.data_uri(f, 900, 82) if f.exists() else ""
-            o.append(f"<figure class=\"diapo\"><img src=\"{uri}\" alt=\"{E(m.get('texte_alternatif') or '')}\">"
-                     f"<span class=\"compteur\">{i}/{len(medias)}</span></figure>")
+    for i, m in enumerate(medias, 1):
+        f = rendu / f"{i:02d}.jpg"
+        uri = images.data_uri(f, 900, 82) if f.exists() else ""
+        o.append(f"<figure class=\"diapo\"><img src=\"{uri}\" alt=\"{E(m.get('texte_alternatif') or '')}\">"
+                 f"<span class=\"compteur\">{i}/{len(medias)}</span></figure>")
     o.append("</div>" + ICONES)
     mus = post.get("musique") or {}
     if mus.get("titre"):
@@ -301,7 +289,7 @@ def page_apercu(jour: str, verdict: dict = None) -> Path:
     o.append("</section>")
     # grille
     o.append("<section class=\"bloc\"><h3>Dans la grille</h3><div class=\"grille\">")
-    premiere = rendu / ("couverture.jpg" if post.get("format") == "reel" else "01.jpg")
+    premiere = rendu / "01.jpg"
     uri = images.data_uri(premiere, 300, 80, ratio=3 / 4) if premiere.exists() else ""
     o.append(f"<div class=\"case nouveau\"><img src=\"{uri}\" alt=\"\"><span>nouveau</span></div>")
     recentes = _couvertures_recentes(8)
@@ -319,23 +307,18 @@ def page_apercu(jour: str, verdict: dict = None) -> Path:
              f"<dt>Collaborateurs</dt><dd>{E(', '.join(collab) or 'aucun')}</dd>"
              f"<dt>Série</dt><dd>{E(post.get('serie') or '')}</dd></dl></section>")
     # séquence
-    if post.get("format") != "reel":
-        o.append("<section class=\"bloc\"><h3>Séquence</h3><ol class=\"sequence\">")
-        for i, m in enumerate(medias, 1):
-            f2 = rendu / f"{i:02d}.jpg"
-            u = images.data_uri(f2, 120, 70) if f2.exists() else ""
-            ids = ", ".join((t.get("compte") if isinstance(t, dict) else t) for t in (m.get("identifications") or []))
-            role = LIBELLE_ROLE.get(m.get("role"), m.get("role", ""))
-            pres = "plein cadre" if m.get("presentation") == "plein_cadre" else "sur fond" if m.get("presentation") == "marges" else ""
-            o.append(f"<li><img src=\"{u}\" alt=\"\"><div><span class=\"role\">{i}. {E(role)}</span> · "
-                     f"{E(pres)}{(' · identifie @' + E(ids)) if ids else ''}"
-                     f"<div class=\"alt\">{E(m.get('texte_alternatif') or '')}</div></div></li>")
-        o.append("</ol></section>")
-    else:
-        r = post.get("reel") or {}
-        o.append(f"<section class=\"bloc\"><h3>Montage</h3><p>{len(r.get('plan_de_montage') or [])} plans · "
-                 f"{E(str(r.get('duree_totale_s') or ''))} s</p>"
-                 f"<p style=\"color:var(--doux)\">{E(r.get('direction_sonore') or '')}</p></section>")
+    o.append("<section class=\"bloc\"><h3>Séquence</h3><ol class=\"sequence\">")
+    for i, m in enumerate(medias, 1):
+        f2 = rendu / f"{i:02d}.jpg"
+        u = images.data_uri(f2, 120, 70) if f2.exists() else ""
+        ids = ", ".join((t.get("compte") if isinstance(t, dict) else t) for t in (m.get("identifications") or []))
+        role = LIBELLE_ROLE.get(m.get("role"), m.get("role", ""))
+        pres = ("module · " + str(m.get("module")).replace("_", " ")) if m.get("module") else \
+            "plein cadre" if m.get("presentation") == "plein_cadre" else "sur fond" if m.get("presentation") == "marges" else ""
+        o.append(f"<li><img src=\"{u}\" alt=\"\"><div><span class=\"role\">{i}. {E(role)}</span> · "
+                 f"{E(pres)}{(' · identifie @' + E(ids)) if ids else ''}"
+                 f"<div class=\"alt\">{E(m.get('texte_alternatif') or '')}</div></div></li>")
+    o.append("</ol></section>")
     if mus:
         o.append("<section class=\"bloc\"><h3>Musique</h3>")
         if mus.get("titre"):

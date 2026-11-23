@@ -262,6 +262,57 @@ enum Ambiance: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Humeur : ambiance libre choisie sur le nuancier (Réglages › Apparence)
+
+/// `ambiance: "humeur:x,y"` (x, y entre 0 et 1) : un point du nuancier, entre quatre ambiances posées aux coins
+/// (en haut Aube et Lavande, en bas Provence et Sauge). Les couleurs sont mélangées en continu.
+enum Humeur {
+    static let coins: [Ambiance] = [.aube, .lavande, .provence, .sauge]
+
+    static func lire(_ texte: String) -> (x: Double, y: Double)? {
+        guard texte.hasPrefix("humeur:") else { return nil }
+        let n = texte.dropFirst(7).split(separator: ",").compactMap { Double($0) }
+        guard n.count == 2 else { return nil }
+        return (min(1, max(0, n[0])), min(1, max(0, n[1])))
+    }
+
+    static func texte(x: Double, y: Double) -> String {
+        String(format: "humeur:%.3f,%.3f", min(1, max(0, x)), min(1, max(0, y)))
+    }
+
+    /// Position d'une ambiance sur le nuancier (les ambiances nommées d'avant tombent sur leur coin).
+    static func position(_ texte: String) -> (x: Double, y: Double) {
+        if let p = lire(texte) { return p }
+        switch Ambiance(texte) {
+        case .aube: return (0, 0)
+        case .lavande: return (1, 0)
+        case .sauge: return (1, 1)
+        case .nuit: return (1, 0.35)
+        case .provence: return (0, 1)
+        }
+    }
+}
+
+extension DefinitionAmbiance {
+    /// La définition pour la valeur de `ambiance` : nommée, ou point du nuancier.
+    static func pour(_ texte: String, sombre: Bool) -> DefinitionAmbiance {
+        guard let p = Humeur.lire(texte) else { return Ambiance(texte).definition(sombre: sombre) }
+        return melange(x: p.x, y: p.y, sombre: sombre)
+    }
+
+    /// Mélange bilinéaire des quatre ambiances des coins.
+    static func melange(x: Double, y: Double, sombre: Bool) -> DefinitionAmbiance {
+        let c = Humeur.coins.map { $0.definition(sombre: sombre) }
+        func m(_ f: (DefinitionAmbiance) -> RVB) -> RVB {
+            f(c[0]).melange(f(c[1]), x).melange(f(c[2]).melange(f(c[3]), x), y)
+        }
+        return DefinitionAmbiance(fond: m { $0.fond },
+                                  taches: (0..<4).map { i in m { $0.taches[i] } },
+                                  encre: m { $0.encre }, accent: m { $0.accent }, accentDoux: m { $0.accentDoux },
+                                  trame: m { $0.trame })
+    }
+}
+
 /// Les couleurs sources d'une ambiance pour un schéma.
 struct DefinitionAmbiance: Equatable {
     /// Fond uni sous les taches.
@@ -291,7 +342,7 @@ struct PaletteRVB: Equatable {
     init(apparence a: Apparence, sombre: Bool, contraste: Bool) {
         let c = a.couleurs
         let d = CouleursApparence()
-        let amb = Ambiance(a.ambiance).definition(sombre: sombre)
+        let amb = DefinitionAmbiance.pour(a.ambiance, sombre: sombre)
         // Une couleur de config/app.yaml remplace celle de l'ambiance seulement si elle a été changée.
         func choix(_ valeur: String, _ origine: String, _ ambiance: RVB) -> RVB {
             Apparence.simplifier(valeur) == Apparence.simplifier(origine) ? ambiance : RVB(hex: valeur, defaut: ambiance)

@@ -411,7 +411,7 @@ def noter(serie_id: str, fichier_notes: str) -> dict:
 
 def etat_series() -> list:
     res = []
-    publiees = {m.get("photo_id") for h in config.historique() for m in h.get("medias", [])}
+    publiees = {x for h in config.historique() for m in h.get("medias", []) for x in config.ids_media(m)}
     for s in config.series():
         cat = lire_catalogue(s["id"])
         photos = [p for p in cat.get("photos", []) if p.get("type") == "photo"]

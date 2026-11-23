@@ -239,7 +239,7 @@ struct PaletteIllustration: Equatable {
         papier = z ? rvb.fond.melange(.blanc, 0.08).couleur : rvb.fond.melange(.blanc, 0.7).couleur
 
         // Teintes de l'ambiance courante (taches du dégradé, version claire : teintes nettes) et de l'accent.
-        let taches = j.ambiance.definition(sombre: false).taches
+        let taches = DefinitionAmbiance.pour(j.apparence.ambiance, sombre: false).taches
         func teinte(_ c: RVB?, sinon h0: Double) -> Double {
             guard let c else { return h0 }
             let (h, s, _) = TSL.de(c)
