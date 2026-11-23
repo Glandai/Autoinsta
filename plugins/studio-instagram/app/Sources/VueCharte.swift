@@ -32,7 +32,8 @@ struct VueCharte: View {
         ScrollViewReader { lecteur in
             ScrollView {
                 VStack(alignment: .leading, spacing: j.esp.sections * 0.6) {
-                    EnTeteEcran(surTitre: "Personnaliser", titre: "Charte",
+                    RetourReglages()
+                    EnTeteEcran(surTitre: "Réglages", titre: "Charte",
                                 chapo: "Le texte que Claude suit pour chaque idée et chaque post : ton identité, tes piliers, ton feed, tes légendes, tes interdits.") {
                         actions
                     }
@@ -132,6 +133,7 @@ struct VueCharte: View {
                     .frame(width: 210, alignment: .leading)
             }
             VStack(alignment: .leading, spacing: j.esp.gouttiere) {
+                CarteAdapterCharte()
                 DemandeClaudeReglages(titre: "Demander à Claude de l'ajuster",
                                       texte: "Un ton plus doux, un pilier en plus, un mot à bannir… Claude modifie la charte pour toi.",
                                       debut: "Ajuste ma charte : ",
@@ -231,6 +233,58 @@ struct VueCharte: View {
         original = etat.charte?.texte ?? ""
         texte = original
         edition = false
+    }
+}
+
+/// « ‹ Réglages » : la Charte et les Règles s'ouvrent depuis Réglages › Charte et règles ; on y revient d'un clic.
+private struct RetourReglages: View {
+    @EnvironmentObject var etat: EtatApp
+
+    var body: some View {
+        Button {
+            UserDefaults.standard.set(RubriqueReglages.charte.rawValue, forKey: RubriqueReglages.cle)
+            etat.montrer(.reglages)
+        } label: { Label("Réglages", systemImage: "chevron.left") }
+        .buttonStyle(.pilule(.claire, taille: .petite))
+        .help("Revenir aux réglages")
+    }
+}
+
+/// « Demander à Claude d'adapter la charte à mon activité » (`lancerClaude(.charte)`), avec l'activité des réglages.
+private struct CarteAdapterCharte: View {
+    @EnvironmentObject var etat: EtatApp
+    @Environment(\.jetons) private var j
+
+    private var activite: String? {
+        guard let a = etat.reglages?.activite, !champACompleter(a) else { return nil }
+        return a
+    }
+
+    var body: some View {
+        Carte {
+            HStack(spacing: 14) {
+                Image(systemName: "camera.aperture")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(j.texte)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(j.fondDoux))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Une charte à ton image").typo(.titre3)
+                    Text(activite.map { "Claude la réécrit pour « \($0) » : ton identité, tes thèmes, tes légendes." }
+                         ?? "Dis d'abord ce que tu photographies dans Réglages › Compte.")
+                        .typo(.legende)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Button { Task { _ = await etat.lancerClaude(.charte) } } label: {
+                    Label("Demander à Claude d'adapter la charte à mon activité", systemImage: "sparkles")
+                }
+                .buttonStyle(.pilule(.sombre, taille: .petite, enCours: etat.lancementEnCours))
+                .disabled(etat.lancementEnCours || etat.claudeTravaille)
+            }
+        }
+        .task { if etat.reglages == nil { await etat.chargerReglages() } }
     }
 }
 
@@ -445,7 +499,8 @@ struct VueRegles: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: j.esp.sections * 0.6) {
-                EnTeteEcran(surTitre: "Personnaliser", titre: "Règles",
+                RetourReglages()
+                EnTeteEcran(surTitre: "Réglages", titre: "Règles",
                             chapo: "Ce que le contrôle refuse ou signale avant chaque publication. Chaque changement s'enregistre tout seul.") {
                     HStack(spacing: 12) {
                         IndicateurSauvegarde(etat: sauvegarde)

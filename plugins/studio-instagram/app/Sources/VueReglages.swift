@@ -22,21 +22,26 @@ import SwiftUI
 // MARK: - Rubriques
 
 enum RubriqueReglages: String, CaseIterable, Identifiable {
-    case compte, publication, creation, claude, instagram, planification, apparence, avance
+    case compte, publication, claude, instagram, planification, apparence, charte, avance
     var id: String { rawValue }
 
     /// Clé UserDefaults de la rubrique ouverte (gardée d'une visite à l'autre).
     static let cle = "reglages.rubrique"
 
+    /// Une valeur gardée par une version précédente (« creation ») retombe sur la bonne rubrique.
+    init(brute: String) {
+        self = RubriqueReglages(rawValue: brute) ?? (brute == "creation" ? .publication : .compte)
+    }
+
     var titre: String {
         switch self {
         case .compte: return "Compte"
-        case .publication: return "Publication"
-        case .creation: return "Création"
+        case .publication: return "Publication et création"
         case .claude: return "Claude"
         case .instagram: return "Instagram"
         case .planification: return "Planification"
         case .apparence: return "Apparence"
+        case .charte: return "Charte et règles"
         case .avance: return "Avancé"
         }
     }
@@ -45,24 +50,24 @@ enum RubriqueReglages: String, CaseIterable, Identifiable {
         switch self {
         case .compte: return "person.crop.circle"
         case .publication: return "paperplane"
-        case .creation: return "wand.and.stars"
         case .claude: return "sparkles"
         case .instagram: return "camera"
         case .planification: return "clock.badge.checkmark"
         case .apparence: return "paintpalette"
+        case .charte: return "text.book.closed"
         case .avance: return "slider.horizontal.3"
         }
     }
 
     var chapo: String {
         switch self {
-        case .compte: return "Qui tu es, ta voix et ta façon de travailler : Claude s'en sert pour chaque légende."
-        case .publication: return "Tes jours, tes heures et la façon dont les images sont mises en page."
-        case .creation: return "Ce que tu valides toi-même quand tu crées un post. Le reste, Claude s'en occupe."
+        case .compte: return "Qui tu es, ce que tu photographies et ta voix : Claude s'en sert pour chaque idée et chaque légende."
+        case .publication: return "Tes jours de publication, et ce que tu valides toi-même quand tu crées un post."
         case .claude: return "Claude sur ce Mac : sa connexion, sa façon de travailler et ce qu'il a fait dernièrement."
         case .instagram: return "Le compte où le studio publie, seulement ce que tu as validé."
         case .planification: return "Ce que le studio fait tout seul, même quand l'app est fermée."
-        case .apparence: return "Change ce que tu veux : tout s'applique en direct, et s'annule d'un clic."
+        case .apparence: return "Le mode, l'ambiance et le nom de ton studio. Tout s'applique en direct."
+        case .charte: return "Ce que Claude suit pour chaque post, et ce que le contrôle refuse avant de publier."
         case .avance: return "Le dossier du studio, sa version et son état."
         }
     }
@@ -82,7 +87,7 @@ struct VueReglages: View {
     /// Quand les valeurs affichées ont été (re)montrées : un changement n'est voulu que s'il suit un geste fait après.
     @Local private var affichage = Date()
 
-    private var rubrique: RubriqueReglages { RubriqueReglages(rawValue: rubriqueBrute) ?? .compte }
+    private var rubrique: RubriqueReglages { RubriqueReglages(brute: rubriqueBrute) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -167,9 +172,13 @@ struct VueReglages: View {
 
     @ViewBuilder private func corps(_ lies: Binding<Reglages>) -> some View {
         switch rubrique {
-        case .compte: RubriqueCompte(r: lies)
-        case .publication: RubriquePublication(r: lies)
-        case .creation: RubriqueCreation(r: lies)
+        case .compte: RubriqueCompte(r: lies, adapterCharte: adapterCharte)
+        case .publication:
+            VStack(alignment: .leading, spacing: j.esp.sections * 0.5) {
+                RubriqueCreation(r: lies)
+                RubriquePublication(r: lies)
+            }
+        case .charte: RubriqueCharteRegles()
         case .claude: RubriqueClaude(r: lies)
         case .instagram: RubriqueInstagram(r: lies)
         case .planification: RubriquePlanification(r: lies)
@@ -181,7 +190,19 @@ struct VueReglages: View {
     private var prenom: String {
         let nom = (r ?? etat.reglages)?.nom.trimmingCharacters(in: .whitespaces) ?? ""
         let premier = nom.split(separator: " ").first.map(String.init) ?? ""
-        return premier.isEmpty || premier.contains("[") ? "Gabriella" : premier
+        return premier.isEmpty || premier.contains("[") ? "" : premier
+    }
+
+    /// « Adapter ma charte à cette activité » : enregistre d'abord ce qui attend, puis confie la charte à Claude.
+    private func adapterCharte() {
+        Task {
+            if sauvegarde == .enAttente {
+                tache?.cancel()
+                serie += 1
+                await enregistrer(serie)
+            }
+            _ = await etat.lancerClaude(.charte)
+        }
     }
 
     /// Les réglages en brouillon. Seul un vrai changement, fait par la photographe après l'affichage, relance
@@ -723,25 +744,46 @@ private extension Binding where Value == Bool {
     }
 }
 
+/// Les champs de config/compte.yaml encore « [À COMPLÉTER : …] » (`champACompleter`, Modeles.swift).
+private enum ChampsACompleter {
+    /// Vrai si la valeur est un modèle à compléter (ou vide).
+    static func vide(_ v: String) -> Bool { champACompleter(v) }
+    /// Ce qu'on montre dans le champ : vide pour un modèle, la valeur sinon.
+    static func affiche(_ v: String) -> String { champACompleter(v) ? "" : v }
+}
+
 private let joursSemaine = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 // MARK: - Compte
 
 private struct RubriqueCompte: View {
     @Binding var r: Reglages
+    /// Enregistre ce qui attend, puis lance Claude sur la charte (`lancerClaude(.charte)`).
+    let adapterCharte: () -> Void
+    @EnvironmentObject var etat: EtatApp
     @Environment(\.jetons) private var j
+    /// L'activité telle qu'elle était à l'arrivée sur la rubrique : si elle change, on propose d'adapter la charte.
+    @Local private var activiteInitiale: String?
+    @Local private var adaptationDemandee = false
+
+    private var activiteChangee: Bool {
+        guard let initiale = activiteInitiale else { return false }
+        let a = r.activite.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !champACompleter(a) && a.lowercased() != initiale.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: j.esp.gouttiere) {
+        VStack(alignment: .leading, spacing: j.esp.sections * 0.5) {
+            carteActivite
             Carte(titre: "Toi", symbole: "person.crop.circle") {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 16, alignment: .top), GridItem(.flexible(), alignment: .top)],
                           alignment: .leading, spacing: 16) {
-                    ChampNomme(titre: "Ton nom", exemple: "Gabriella Feyer", texte: $r.nom)
-                    ChampNomme(titre: "Compte Instagram", aide: "Sans le @.", exemple: "gabriellafeyer.photo",
+                    ChampNomme(titre: "Ton nom", exemple: "Camille Martin", texte: aCompleter(\.nom))
+                    ChampNomme(titre: "Compte Instagram", aide: "Sans le @.", exemple: "camille.photo",
                                texte: compteSansArobase)
-                    ChampNomme(titre: "Où tu travailles", exemple: "Provence, Côte d'Azur", texte: $r.localisation)
+                    ChampNomme(titre: "Où tu travailles", exemple: "Lyon et alentours", texte: aCompleter(\.localisation))
                     ChampNomme(titre: "Fuseau horaire", aide: "Par exemple Europe/Paris.", exemple: "Europe/Paris",
-                               texte: $r.fuseau)
+                               texte: aCompleter(\.fuseau))
                 }
             }
             Carte(titre: "Ta voix", symbole: "text.quote") {
@@ -767,7 +809,7 @@ private struct RubriqueCompte: View {
                 Text("La seule source que Claude utilise pour parler de ta pratique. Écris-la comme tu la raconterais.")
                     .typo(.legende)
                     .fixedSize(horizontal: false, vertical: true)
-                ChampDoux(texte: $r.approche, exemple: "Je photographie les mariages comme…", lignes: 4...14)
+                ChampDoux(texte: aCompleter(\.approche), exemple: "Je photographie comme…", lignes: 4...14)
                     .accessibilityLabel("Ton approche")
             }
             Carte(titre: "Exemples de vraies légendes", symbole: "quote.bubble") {
@@ -796,14 +838,71 @@ private struct RubriqueCompte: View {
         }
     }
 
+    // MARK: Ce que tu photographies
+
+    private var carteActivite: some View {
+        Carte(titre: "Ce que tu photographies", symbole: "camera.aperture") {
+            Text("Claude choisit ses idées, son vocabulaire et ta charte en fonction de ton activité.")
+                .typo(.legende)
+                .fixedSize(horizontal: false, vertical: true)
+            ChoixEnPilules(options: Reglages.activitesSuggerees.map { OptionReglage(valeur: $0, titre: $0.prefix(1).uppercased() + $0.dropFirst()) },
+                           selection: aCompleter(\.activite))
+                .padding(.top, 2)
+            ChampDoux(texte: aCompleter(\.activite), exemple: "Ou écris la tienne : photographe culinaire, d'architecture…",
+                      lignes: 1...1)
+                .accessibilityLabel("Ce que tu photographies")
+            if activiteChangee {
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(j.accentTexte)
+                        .accessibilityHidden(true)
+                    Text(adaptationDemandee
+                         ? "Claude adapte ta charte. Tu la retrouves dans Charte et règles."
+                         : "Ta charte parle encore de ton ancienne activité.")
+                        .typo(.corps)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    if !adaptationDemandee {
+                        Button {
+                            adaptationDemandee = true
+                            adapterCharte()
+                        } label: { Label("Adapter ma charte à cette activité", systemImage: "text.book.closed") }
+                        .buttonStyle(.pilule(.sombre, taille: .petite, enCours: etat.lancementEnCours))
+                        .disabled(etat.lancementEnCours || etat.claudeTravaille)
+                    }
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: j.rayons.champ, style: .continuous).fill(j.fondDoux))
+                .transition(j.transition(.apparition))
+            }
+        }
+        .animation(j.anim(.doux), value: activiteChangee)
+        .onAppear { if activiteInitiale == nil { activiteInitiale = ChampsACompleter.affiche(r.activite) } }
+    }
+
     private var compteSansArobase: Binding<String> {
-        Binding(get: { r.compte_instagram },
-                set: { r.compte_instagram = $0.hasPrefix("@") ? String($0.dropFirst()) : $0 })
+        Binding(get: { ChampsACompleter.affiche(r.compte_instagram) },
+                set: { v in
+                    let n = v.hasPrefix("@") ? String(v.dropFirst()) : v
+                    if !(n.isEmpty && ChampsACompleter.vide(r.compte_instagram)) { r.compte_instagram = n }
+                })
     }
 
     private func exemple(_ i: Int) -> Binding<String> {
-        Binding(get: { i < r.exemples_de_legendes.count ? r.exemples_de_legendes[i] : "" },
-                set: { if i < r.exemples_de_legendes.count { r.exemples_de_legendes[i] = $0 } })
+        Binding(get: { i < r.exemples_de_legendes.count ? ChampsACompleter.affiche(r.exemples_de_legendes[i]) : "" },
+                set: { v in
+                    guard i < r.exemples_de_legendes.count,
+                          !(v.isEmpty && ChampsACompleter.vide(r.exemples_de_legendes[i])) else { return }
+                    r.exemples_de_legendes[i] = v
+                })
+    }
+
+    /// Un champ encore « [À COMPLÉTER : …] » s'affiche vide, avec son exemple ; il ne change que si elle écrit.
+    private func aCompleter(_ chemin: WritableKeyPath<Reglages, String>) -> Binding<String> {
+        Binding(get: { ChampsACompleter.affiche(r[keyPath: chemin]) },
+                set: { v in
+                    if !(v.isEmpty && ChampsACompleter.vide(r[keyPath: chemin])) { r[keyPath: chemin] = v }
+                })
     }
 }
 
@@ -814,7 +913,7 @@ private struct RubriquePublication: View {
     @Environment(\.jetons) private var j
 
     var body: some View {
-        VStack(alignment: .leading, spacing: j.esp.gouttiere) {
+        VStack(alignment: .leading, spacing: j.esp.sections * 0.5) {
             Carte(titre: "Tes jours de publication", symbole: "calendar") {
                 Text("Le studio publie ces jours-là, à l'heure choisie, seulement ce que tu as validé.")
                     .typo(.legende)
@@ -895,7 +994,7 @@ private struct RubriqueCreation: View {
     private var aValider: [String] { r.creation?.etapes_a_valider ?? ReglagesCreation.etapes }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: j.esp.gouttiere) {
+        VStack(alignment: .leading, spacing: j.esp.sections * 0.5) {
             Carte(titre: "Les étapes que tu valides", symbole: "checkmark.circle") {
                 Text("Quand tu crées un post, l'assistant s'arrête sur ces étapes pour que tu valides. Les autres, Claude les fait et passe à la suite.")
                     .typo(.legende)
@@ -913,15 +1012,6 @@ private struct RubriqueCreation: View {
                         .typo(.legende)
                         .help("Cette étape ne se désactive pas.")
                 }
-            }
-            Carte(titre: "Ton parcours", symbole: "point.topleft.down.to.point.bottomright.curvepath") {
-                Text("Le point « à toi » marque les étapes que tu valides.").typo(.legende)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    RappelEtapes(etapes: EtapeCreation.etapes(aValider: aValider), courante: 0)
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 2)
-                }
-                .animation(j.anim(.selection), value: aValider)
             }
             Carte(titre: "Les idées du matin", symbole: "sunrise") {
                 LigneReglage("Idées proposées chaque matin") {
@@ -981,7 +1071,7 @@ private struct RubriqueClaude: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: j.esp.gouttiere) {
+        VStack(alignment: .leading, spacing: j.esp.sections * 0.5) {
             carteEtat
             carteModele
             carteTravaux
@@ -1228,7 +1318,7 @@ private struct RubriqueInstagram: View {
     private static let explorateur = URL(string: "https://developers.facebook.com/tools/explorer/")!
 
     var body: some View {
-        VStack(alignment: .leading, spacing: j.esp.gouttiere) {
+        VStack(alignment: .leading, spacing: j.esp.sections * 0.5) {
             carteEtat
             if formulaire {
                 carteFormulaire
@@ -1488,7 +1578,7 @@ private struct RubriquePlanification: View {
     private var active: Bool { etat.planification?.active ?? etat.reglages?.planification?.active ?? false }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: j.esp.gouttiere) {
+        VStack(alignment: .leading, spacing: j.esp.sections * 0.5) {
             Carte {
                 LigneReglage("Le studio travaille tout seul",
                              aide: "Ton Mac doit être allumé ; en veille, la tâche part au réveil. Rien n'est publié sans ta validation.",
@@ -1582,6 +1672,42 @@ private struct RubriquePlanification: View {
     }
 }
 
+// MARK: - Charte et règles
+
+private struct RubriqueCharteRegles: View {
+    @EnvironmentObject var etat: EtatApp
+    @Environment(\.jetons) private var j
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: j.esp.sections * 0.5) {
+            Carte(titre: "Ta charte", symbole: "text.book.closed") {
+                Text("Le texte que Claude suit pour chaque idée et chaque post : ton identité, tes thèmes, ton feed, tes légendes.")
+                    .typo(.legende)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button { etat.montrer(.charte) } label: { Label("Ouvrir la charte", systemImage: "arrow.right") }
+                        .buttonStyle(.pilule(.sombre))
+                    Button { Task { _ = await etat.lancerClaude(.charte) } } label: {
+                        Label("L'adapter à mon activité", systemImage: "sparkles")
+                    }
+                    .buttonStyle(.pilule(.claire, enCours: etat.lancementEnCours))
+                    .disabled(etat.lancementEnCours || etat.claudeTravaille)
+                    .help("Claude réécrit ta charte pour ce que tu photographies (Réglages › Compte).")
+                }
+                .padding(.top, 4)
+            }
+            Carte(titre: "Tes règles", symbole: "checkmark.shield") {
+                Text("Ce que le contrôle refuse ou signale avant chaque publication : mots interdits, limites, alternance du feed.")
+                    .typo(.legende)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button { etat.montrer(.regles) } label: { Label("Ouvrir les règles", systemImage: "arrow.right") }
+                    .buttonStyle(.pilule(.claire))
+                    .padding(.top, 4)
+            }
+        }
+    }
+}
+
 // MARK: - Avancé
 
 private struct RubriqueAvance: View {
@@ -1595,7 +1721,7 @@ private struct RubriqueAvance: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: j.esp.gouttiere) {
+        VStack(alignment: .leading, spacing: j.esp.sections * 0.5) {
             Carte(titre: "Le dossier du studio", symbole: "folder") {
                 Text(etat.dossier.path)
                     .typo(.mono)
@@ -1667,7 +1793,7 @@ private struct RubriqueAvance: View {
     }
 }
 
-// MARK: - Apparence (en direct)
+// MARK: - Apparence (quatre réglages : mode, ambiance, nom du studio, salutation)
 
 private struct RubriqueApparence: View {
     let prenom: String
@@ -1675,7 +1801,6 @@ private struct RubriqueApparence: View {
     @EnvironmentObject var etat: EtatApp
     @Environment(\.jetons) private var j
     @Local private var brouillon = Apparence.defaut
-    @Local private var pret = false
     @Local private var tache: Task<Void, Never>?
     @Local private var serie = 0
     @Local private var enAttente = false
@@ -1684,9 +1809,7 @@ private struct RubriqueApparence: View {
     /// Dernière série enregistrée : « Apparence mise à jour » + Annuler (revient à cette valeur).
     @Local private var annulable: Apparence?
     @Local private var derniere: Apparence?
-    @Local private var couleursOuvertes = false
     @Local private var confirmerRetablir = false
-    @Local private var survolAmbiance: String?
     /// Quand le brouillon a été (re)pris de `etat.apparence` : un changement n'est voulu que s'il suit un geste fait après.
     @Local private var affichage = Date()
 
@@ -1701,7 +1824,7 @@ private struct RubriqueApparence: View {
                             .padding(.top, j.esp.page * 0.7)
                             .padding(.bottom, j.esp.page)
                     }
-                    colonneApercu(echelle: 0.5)
+                    colonneApercu
                         .padding(.top, j.esp.page * 0.7)
                         .padding(.trailing, j.esp.page)
                 }
@@ -1721,7 +1844,6 @@ private struct RubriqueApparence: View {
             InteractionsUtilisateur.partage.demarrer()
             brouillon = etat.apparence
             affichage = Date()
-            pret = true
         }
         .onChange(of: etat.apparence) { _, a in
             // Une personnalisation faite par Claude (ou Rétablir) s'affiche ici aussi, sans rien réécrire.
@@ -1734,22 +1856,20 @@ private struct RubriqueApparence: View {
             Button("Rétablir", role: .destructive) { retablir() }
             Button("Annuler", role: .cancel) {}
         } message: {
-            Text("L'ambiance Provence, Plus Jakarta Sans et les écrans d'origine reviennent. Tes autres réglages ne changent pas.")
+            Text("L'ambiance Provence, le mode automatique et le nom d'origine reviennent. Tes autres réglages ne changent pas.")
         }
     }
 
     // MARK: Colonnes
 
     private var colonneReglages: some View {
-        VStack(alignment: .leading, spacing: j.esp.gouttiere) {
+        VStack(alignment: .leading, spacing: j.esp.sections * 0.5) {
             entete
             carteAmbiance
-            carteTexte
-            carteFormes
-            carteCouleurs
-            carteEcrans
+            carteMode
+            carteStudio
             DemandeClaudeReglages(titre: "Envie d'autre chose ?",
-                                  texte: "Demande-le à Claude : une couleur, une police, un écran en plus…",
+                                  texte: "Demande-le à Claude : une couleur, une ambiance, une autre salutation…",
                                   debut: "Pour l'apparence de l'app, j'aimerais ",
                                   contexte: "Réglages › Apparence")
             HStack {
@@ -1757,7 +1877,6 @@ private struct RubriqueApparence: View {
                     .buttonStyle(.destructif)
                 Spacer()
             }
-            .padding(.top, 4)
         }
         .frame(maxWidth: 680, alignment: .leading)
     }
@@ -1787,25 +1906,20 @@ private struct RubriqueApparence: View {
         .animation(j.anim(.doux), value: annulable)
     }
 
-    private func colonneApercu(echelle: CGFloat) -> some View {
+    private var colonneApercu: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Aperçu en direct").typo(.surtitre)
-            miniature(.light, echelle: echelle)
+            Text("Aperçu").typo(.surtitre)
+            miniature(.light, echelle: 0.5)
             Text("Clair").typo(.legende)
-            miniature(.dark, echelle: echelle)
+            miniature(.dark, echelle: 0.5)
                 .padding(.top, 4)
             Text("Sombre").typo(.legende)
-            Text("Ce que tu changes s'affiche ici tout de suite, puis dans toute l'app.")
-                .typo(.legende)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(width: 560 * echelle, alignment: .leading)
-                .padding(.top, 6)
         }
     }
 
     private var rangeeApercu: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Aperçu en direct").typo(.surtitre)
+            Text("Aperçu").typo(.surtitre)
             HStack(alignment: .top, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) { miniature(.light, echelle: 0.42); Text("Clair").typo(.legende) }
                 VStack(alignment: .leading, spacing: 6) { miniature(.dark, echelle: 0.42); Text("Sombre").typo(.legende) }
@@ -1828,10 +1942,11 @@ private struct RubriqueApparence: View {
         .accessibilityLabel(schema == .dark ? "Aperçu de l'app en mode sombre" : "Aperçu de l'app en mode clair")
     }
 
-    // MARK: Ambiance, points, mode
+    // MARK: Les quatre réglages
 
     private var carteAmbiance: some View {
         Carte(titre: "Ambiance", symbole: "paintpalette") {
+            Text("Les couleurs du fond de l'app.").typo(.legende)
             // Les cinq sur une seule rangée, quelle que soit la largeur.
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 84), spacing: 10, alignment: .top), count: 5),
                       alignment: .leading, spacing: 14) {
@@ -1841,255 +1956,31 @@ private struct RubriqueApparence: View {
                     }
                 }
             }
-            Filet().padding(.top, 4)
-            LigneReglage("Trame de points", aide: "Une fine trame sur le dégradé, plus présente sur les bords.",
-                         symbole: "circle.grid.3x3") {
-                lien(\.points).interrupteur("Trame de points")
-            }
-            if j.systeme.augmenterContraste && brouillon.points {
-                Text("« Augmenter le contraste » est actif sur ce Mac : la trame reste masquée.").typo(.legende)
-            }
-            Filet()
-            LigneReglage("Mode", symbole: "circle.lefthalf.filled") {
-                ChoixEnPilules(options: [OptionReglage(valeur: "auto", titre: "Auto", symbole: "circle.lefthalf.filled"),
-                                         OptionReglage(valeur: "clair", titre: "Clair", symbole: "sun.max"),
-                                         OptionReglage(valeur: "sombre", titre: "Sombre", symbole: "moon")],
-                               selection: lien(\.mode))
-                    .fixedSize()
-            }
+            .padding(.top, 4)
         }
     }
 
-    // MARK: Texte
+    private var carteMode: some View {
+        Carte(titre: "Mode", symbole: "circle.lefthalf.filled") {
+            Text("« Auto » suit le réglage de ton Mac, clair le jour et sombre le soir.").typo(.legende)
+            ChoixEnPilules(options: [OptionReglage(valeur: "auto", titre: "Auto", symbole: "circle.lefthalf.filled"),
+                                     OptionReglage(valeur: "clair", titre: "Clair", symbole: "sun.max"),
+                                     OptionReglage(valeur: "sombre", titre: "Sombre", symbole: "moon")],
+                           selection: lien(\.mode))
+                .fixedSize()
+                .padding(.top, 4)
+        }
+    }
 
-    private var carteTexte: some View {
-        Carte(titre: "Texte", symbole: "textformat") {
-            Text("Police").typo(.corpsFort)
-            HStack(spacing: 10) {
-                ForEach(Apparence.polices, id: \.self) { p in
-                    TuileApparence(titre: Apparence.libelle(p), choisie: brouillon.police == p) {
-                        changer { $0.police = p }
-                    } apercu: {
-                        Text("Bonjour").font(policeExemple(p, taille: 24)).foregroundStyle(j.texte)
-                    }
-                }
-            }
-            Text("Titres").typo(.corpsFort).padding(.top, 6)
-            HStack(spacing: 10) {
-                ForEach(Apparence.stylesTitres, id: \.self) { t in
-                    TuileApparence(titre: libelleTitres(t), choisie: brouillon.titres == t) {
-                        changer { $0.titres = t }
-                    } apercu: {
-                        Text("Aa").font(titreExemple(t, taille: 26)).foregroundStyle(j.texte)
-                    }
-                }
-            }
-            Filet().padding(.top, 6)
-            LigneReglage("Densité", aide: "L'espace entre les choses.") {
-                ChoixEnPilules(options: Apparence.densites.map { OptionReglage(valeur: $0, titre: Apparence.libelle($0)) },
-                               selection: lien(\.densite))
-                    .fixedSize()
-            }
-            Filet()
+    private var carteStudio: some View {
+        Carte(titre: "Ton studio", symbole: "textformat") {
             HStack(alignment: .top, spacing: 16) {
                 ChampNomme(titre: "Nom du studio", aide: "En haut de chaque page.", exemple: "Studio Instagram",
                            texte: lien(\.nom_affiche))
-                ChampNomme(titre: "Salutation", aide: "« Bonjour Gabriella, … »", exemple: "Bonjour",
+                ChampNomme(titre: "Salutation", aide: "Le premier mot de l'accueil, avant ton prénom.", exemple: "Bonjour",
                            texte: lien(\.salutation))
             }
-            .padding(.top, 6)
         }
-    }
-
-    private func policeExemple(_ p: String, taille: CGFloat) -> Font {
-        switch p {
-        case "systeme": return .system(size: taille, weight: .regular)
-        case "arrondie": return .system(size: taille, weight: .medium, design: .rounded)
-        default: return .jakarta(taille, graisse: 420)
-        }
-    }
-
-    private func titreExemple(_ t: String, taille: CGFloat) -> Font {
-        switch t {
-        case "serif": return .system(size: taille, weight: .regular, design: .serif)
-        case "arrondi": return .system(size: taille, weight: .medium, design: .rounded)
-        case "standard": return .system(size: taille, weight: .regular)
-        default: return policeExemple(brouillon.police, taille: taille)
-        }
-    }
-
-    private func libelleTitres(_ t: String) -> String {
-        t == "arrondi" ? "Arrondis" : Apparence.libelle(t)
-    }
-
-    // MARK: Formes et mouvement
-
-    private var arrondi: Binding<Double> {
-        Binding(get: { Double(brouillon.arrondi) }, set: { v in changer { $0.arrondi = Int(v.rounded()) } })
-    }
-
-    private var carteFormes: some View {
-        let r = CGFloat(brouillon.arrondi)
-        return Carte(titre: "Formes et mouvement", symbole: "square.on.circle") {
-            LigneReglage("Arrondi des coins", aide: "De tout droit (0) à très doux (28).") {
-                HStack(spacing: 12) {
-                    Slider(value: arrondi, in: 0...28, step: 1)
-                        .frame(width: 150)
-                        .accessibilityLabel("Arrondi des coins")
-                        .accessibilityValue("\(brouillon.arrondi)")
-                    RoundedRectangle(cornerRadius: min(32, r * 1.6), style: .continuous)
-                        .fill(j.remplissageCarte)
-                        .overlay(RoundedRectangle(cornerRadius: min(32, r * 1.6), style: .continuous).strokeBorder(j.traitFort))
-                        .frame(width: 46, height: 34)
-                    RoundedRectangle(cornerRadius: r >= 6 ? 13 : r, style: .continuous)
-                        .fill(j.encre)
-                        .frame(width: 58, height: 26)
-                        .overlay(Text("Pilule").font(.jakarta(10.5, graisse: 600)).foregroundStyle(j.surEncre))
-                        .accessibilityHidden(true)
-                }
-            }
-            Filet()
-            LigneReglage("Animations", aide: j.systeme.reduireAnimations
-                         ? "« Réduire les animations » est actif sur ce Mac : le fond reste immobile."
-                         : "« Aucune » fige aussi le fond.") {
-                ChoixEnPilules(options: Apparence.niveauxAnimations.map { OptionReglage(valeur: $0, titre: Apparence.libelle($0)) },
-                               selection: lien(\.animations))
-                    .frame(maxWidth: 260)
-            }
-            Filet()
-            LigneReglage("Icônes") {
-                ChoixEnPilules(options: [OptionReglage(valeur: "pleines", titre: "Pleines", symbole: "heart.fill"),
-                                         OptionReglage(valeur: "contours", titre: "Contours", symbole: "heart")],
-                               selection: lien(\.icones))
-                    .fixedSize()
-            }
-        }
-    }
-
-    // MARK: Couleurs fines
-
-    private static let origine = CouleursApparence()
-
-    private var couleursChangees: Bool {
-        let c = brouillon.couleurs, o = RubriqueApparence.origine
-        return c.accent != o.accent || c.accent_doux != o.accent_doux || c.fond_clair != o.fond_clair || c.fond_sombre != o.fond_sombre
-    }
-
-    private var carteCouleurs: some View {
-        let jetonsBrouillon = Jetons(apparence: brouillon, schema: j.schema, systeme: j.systeme)
-        return Carte {
-            DisclosureGroup(isExpanded: $couleursOuvertes) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Elles remplacent celles de l'ambiance. Le succès et l'alerte gardent toujours un mot à côté.")
-                        .typo(.legende)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.vertical, 8)
-                    ligneCouleur("Accent", aide: "Sélection, liens, progression.", \.accent)
-                    Filet()
-                    ligneCouleur("Accent doux", aide: "Fonds doux, pastilles.", \.accent_doux)
-                    Filet()
-                    ligneCouleur("Fond clair", \.fond_clair)
-                    Filet()
-                    ligneCouleur("Fond sombre", \.fond_sombre)
-                    Filet()
-                    ligneCouleur("Succès", \.succes)
-                    Filet()
-                    ligneCouleur("Alerte", \.alerte)
-                    if jetonsBrouillon.accentPeuLisible {
-                        Label("Cette couleur est peu lisible sur le fond. L'app utilisera le texte pour les liens.",
-                              systemImage: "exclamationmark.triangle.fill")
-                            .typo(.legende, couleur: j.texte)
-                            .foregroundStyle(j.alerte)
-                            .padding(.top, 8)
-                    }
-                    if couleursChangees {
-                        Button("Revenir aux couleurs de l'ambiance") {
-                            changer { a in
-                                a.couleurs.accent = RubriqueApparence.origine.accent
-                                a.couleurs.accent_doux = RubriqueApparence.origine.accent_doux
-                                a.couleurs.fond_clair = RubriqueApparence.origine.fond_clair
-                                a.couleurs.fond_sombre = RubriqueApparence.origine.fond_sombre
-                            }
-                        }
-                        .buttonStyle(.discret)
-                        .padding(.top, 8)
-                    }
-                }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "eyedropper")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(j.texte)
-                        .frame(width: 34, height: 34)
-                        .background(Circle().fill(j.fondDoux))
-                    Text("Couleurs fines").typo(.titre3)
-                    if couleursChangees { Pastille("Personnalisées", ton: .douce) }
-                }
-            }
-        }
-    }
-
-    private func ligneCouleur(_ titre: String, aide: String? = nil, _ chemin: WritableKeyPath<CouleursApparence, String>) -> some View {
-        LigneReglage(titre, aide: aide) {
-            ColorPicker(titre, selection: Binding(get: { Color(hex: brouillon.couleurs[keyPath: chemin]) ?? .gray },
-                                                 set: { c in
-                                                     guard !InteractionsUtilisateur.memeCouleur(brouillon.couleurs[keyPath: chemin], c) else { return }
-                                                     changer { $0.couleurs[keyPath: chemin] = c.hex }
-                                                 }),
-                        supportsOpacity: false)
-                .labelsHidden()
-        }
-    }
-
-    // MARK: Écrans de la barre
-
-    private var ordreEcrans: [Ecran] {
-        let visibles = brouillon.ecransVisibles
-        return visibles + Ecran.allCases.filter { $0 != .creation && !visibles.contains($0) }
-    }
-
-    private var carteEcrans: some View {
-        let ordre = ordreEcrans
-        let visibles = Set(brouillon.ecransVisibles)
-        return Carte(titre: "Écrans de la barre", symbole: "sidebar.left") {
-            Text("Glisse pour changer l'ordre. Aujourd'hui et Réglages restent toujours là.")
-                .typo(.legende)
-            VStack(spacing: 0) {
-                ForEach(Array(ordre.enumerated()), id: \.element) { i, e in
-                    if i > 0 { Filet() }
-                    LigneEcranBarre(ecran: e, visible: visibles.contains(e), verrouille: e == .aujourdhui || e == .reglages,
-                                    premier: i == 0, dernier: i == ordre.count - 1,
-                                    basculer: { basculer(e, $0) },
-                                    monter: { deplacer(e, de: -1) },
-                                    descendre: { deplacer(e, de: 1) },
-                                    deposer: { source in deplacer(source, avant: e) })
-                }
-            }
-            .animation(j.anim(.selection), value: ordre)
-        }
-    }
-
-    private func basculer(_ e: Ecran, _ visible: Bool) {
-        let ordre = ordreEcrans
-        let visibles = Set(brouillon.ecransVisibles)
-        changer { a in a.ecrans = ordre.filter { $0 == e ? visible : visibles.contains($0) }.map(\.rawValue) }
-    }
-
-    private func deplacer(_ e: Ecran, de delta: Int) {
-        let ordre = ordreEcrans
-        guard let i = ordre.firstIndex(of: e) else { return }
-        let k = i + delta
-        guard ordre.indices.contains(k) else { return }
-        deplacer(e, avant: ordre[k])
-    }
-
-    private func deplacer(_ source: Ecran, avant cible: Ecran) {
-        var liste = ordreEcrans
-        guard source != cible, let i = liste.firstIndex(of: source), let k = liste.firstIndex(of: cible) else { return }
-        liste.remove(at: i)
-        liste.insert(source, at: k)
-        let visibles = Set(brouillon.ecransVisibles)
-        changer { a in a.ecrans = liste.filter { visibles.contains($0) }.map(\.rawValue) }
     }
 
     // MARK: Brouillon et enregistrement
@@ -2163,6 +2054,7 @@ private struct RubriqueApparence: View {
         Task {
             await etat.retablirApparence()
             withAnimation(j.anim(.theme)) { brouillon = etat.apparence }
+            affichage = Date()
             sauvegarde = .fait
         }
     }
@@ -2184,7 +2076,7 @@ private struct VignetteAmbiance: View {
         return Button(action: action) {
             VStack(alignment: .leading, spacing: 6) {
                 ApercuTheme(apparence: variante, schema: j.schema) {
-                    FondAmbiance(anime: true)
+                    FondAmbiance(anime: false)
                 }
                 .frame(height: 80)
                 .frame(maxWidth: .infinity)
@@ -2215,122 +2107,6 @@ private struct VignetteAmbiance: View {
         .animation(j.anim(.selection), value: choisie)
         .accessibilityLabel("\(ambiance.nom). \(ambiance.description)")
         .accessibilityAddTraits(choisie ? .isSelected : [])
-    }
-}
-
-/// Une tuile de choix (police, titres) : un aperçu, un nom ; choisie = anneau d'encre.
-private struct TuileApparence<Apercu: View>: View {
-    let titre: String
-    let choisie: Bool
-    let action: () -> Void
-    let apercu: Apercu
-    @Environment(\.jetons) private var j
-    @Local private var survol = false
-
-    init(titre: String, choisie: Bool, action: @escaping () -> Void, @ViewBuilder apercu: () -> Apercu) {
-        self.titre = titre
-        self.choisie = choisie
-        self.action = action
-        self.apercu = apercu()
-    }
-
-    var body: some View {
-        let forme = RoundedRectangle(cornerRadius: j.rayons.champ, style: .continuous)
-        Button(action: action) {
-            VStack(spacing: 6) {
-                apercu
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .frame(height: 34)
-                Text(titre)
-                    .typo(.legende, couleur: choisie ? j.texte : j.texteSecondaire)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity)
-            .background(forme.fill(survol && !choisie ? j.surfaceElevee : j.remplissageCarte))
-            .overlay(forme.strokeBorder(choisie ? j.encre : j.trait, lineWidth: choisie ? 2 : 1))
-            .contentShape(forme)
-        }
-        .buttonStyle(.plain)
-        .onHover { survol = $0 }
-        .animation(j.anim(.survol), value: survol)
-        .animation(j.anim(.selection), value: choisie)
-        .accessibilityLabel(titre)
-        .accessibilityAddTraits(choisie ? .isSelected : [])
-    }
-}
-
-/// Un écran de la barre : poignée, symbole, nom, ↑ ↓, interrupteur (ou cadenas pour Aujourd'hui et Réglages).
-private struct LigneEcranBarre: View {
-    let ecran: Ecran
-    let visible: Bool
-    let verrouille: Bool
-    let premier: Bool
-    let dernier: Bool
-    let basculer: (Bool) -> Void
-    let monter: () -> Void
-    let descendre: () -> Void
-    let deposer: (Ecran) -> Void
-    @Environment(\.jetons) private var j
-    @Local private var cible = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "line.3.horizontal")
-                .foregroundStyle(j.texteTertiaire)
-                .help("Glisse pour changer l'ordre")
-                .accessibilityHidden(true)
-            Image(systemName: ecran.symbole)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(visible ? j.texte : j.texteTertiaire)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(visible ? j.fondDoux : Color.clear))
-                .overlay(Circle().strokeBorder(visible ? Color.clear : j.trait))
-                .accessibilityHidden(true)
-            Text(ecran.titre)
-                .typo(.corps, couleur: visible ? j.texte : j.texteSecondaire)
-            Spacer(minLength: 8)
-            Button(action: monter) { Image(systemName: "chevron.up") }
-                .buttonStyle(.rond(.transparente, diametre: 26))
-                .disabled(premier || !visible)
-                .help("Monter")
-                .accessibilityLabel("Monter \(ecran.titre)")
-            Button(action: descendre) { Image(systemName: "chevron.down") }
-                .buttonStyle(.rond(.transparente, diametre: 26))
-                .disabled(dernier || !visible)
-                .help("Descendre")
-                .accessibilityLabel("Descendre \(ecran.titre)")
-            Group {
-                if verrouille {
-                    Image(systemName: "lock.fill")
-                        .foregroundStyle(j.texteSecondaire)
-                        .frame(width: 38)
-                        .help("Toujours dans la barre")
-                        .accessibilityLabel("\(ecran.titre) : toujours dans la barre")
-                } else {
-                    Binding(get: { visible }, set: { basculer($0) }).interrupteur("Montrer \(ecran.titre)")
-                }
-            }
-        }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 6)
-        .background(RoundedRectangle(cornerRadius: j.rayons.champ * 0.6, style: .continuous).fill(cible ? j.selection : Color.clear))
-        .contentShape(Rectangle())
-        .draggable(ecran.rawValue) {
-            Label(ecran.titre, systemImage: ecran.symbole)
-                .font(j.police(.corpsFort))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(j.carte))
-        }
-        .dropDestination(for: String.self) { elements, _ in
-            guard let id = elements.first, let source = Ecran(rawValue: id) else { return false }
-            withAnimation(j.anim(.selection)) { deposer(source) }
-            return true
-        } isTargeted: { cible = $0 }
     }
 }
 
@@ -2367,19 +2143,12 @@ private struct MiniFenetreStudio: View {
                     TitreDeuxTons(debut: "\(prenomSalue), ", suite: "trois idées t'attendent.", role: .titre1)
                         .lineLimit(2)
                     Text("Claude les a préparées ce matin.").typo(.chapo).lineLimit(1)
-                    HStack(spacing: 12) {
-                        Carte(titre: "Le mas au matin", symbole: "lightbulb") {
-                            Text("Idée 1 · Lieux").typo(.legende).lineLimit(1)
-                        }
-                        Carte(titre: "Les mains", symbole: "heart") {
-                            Text("Idée 2 · Détails").typo(.legende).lineLimit(1)
-                        }
-                    }
-                    HStack(spacing: 8) {
+                    Carte(titre: "Tes idées du jour", symbole: "lightbulb") {
+                        Text("Choisis celle que Claude prépare.").typo(.legende).lineLimit(1)
                         Button {} label: { Label("Choisir une idée", systemImage: "wand.and.stars") }
                             .buttonStyle(.pilule(.sombre))
-                        Pastille("à toi", symbole: "circle.fill", ton: .aToi)
                     }
+                    .frame(maxWidth: 300, alignment: .leading)
                     Spacer(minLength: 0)
                 }
                 .padding(22)
@@ -2387,11 +2156,11 @@ private struct MiniFenetreStudio: View {
             .padding(.vertical, 12)
             .padding(.trailing, 12)
         }
-        .background(FondAmbiance(anime: true))
+        .background(FondAmbiance(anime: false))
     }
 
     private var prenomSalue: String {
         let salut = j.apparence.salutation.trimmingCharacters(in: .whitespaces)
-        return (salut.isEmpty ? "Bonjour" : salut) + " " + prenom
+        return [salut.isEmpty ? "Bonjour" : salut, prenom].filter { !$0.isEmpty }.joined(separator: " ")
     }
 }

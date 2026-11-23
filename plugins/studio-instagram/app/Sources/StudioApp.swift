@@ -162,7 +162,8 @@ struct VueRacine: View {
 
     @ViewBuilder private var contenu: some View {
         ZStack {
-            FondAmbiance()
+            // L'onboarding dessine déjà son propre fond : un seul fond animé à la fois.
+            if !montrerOnboarding { FondAmbiance() }
             if montrerOnboarding {
                 VueBienvenue()
                     .transition(.opacity)
@@ -249,6 +250,32 @@ private struct SuiviJours: ViewModifier {
 
 // MARK: - Studio : barre d'icônes + page
 
+/// La barre réduite à l'essentiel (simplification du 22/11) : « + », Accueil, Galeries, Statistiques, Réglages.
+/// Idées et Aperçu s'ouvrent depuis l'accueil et le « + » ; Charte et Règles depuis les Réglages.
+enum BarreStudio {
+    static let essentiels: [Ecran] = [.aujourdhui, .galeries, .statistiques, .reglages]
+
+    /// Les écrans de la barre, dans l'ordre d'`apparence.ecrans` (le moteur n'y met plus que l'essentiel).
+    static func ecrans(_ a: Apparence) -> [Ecran] {
+        let liste = a.ecransVisibles.filter { essentiels.contains($0) }
+        return liste.count >= 2 ? liste : essentiels
+    }
+
+    static func elements(_ a: Apparence) -> [ElementBarre<Ecran>] {
+        ecrans(a).map { ElementBarre(id: $0, titre: titre($0), symbole: $0.symbole) }
+    }
+
+    static func titre(_ e: Ecran) -> String { e == .aujourdhui ? "Accueil" : e.titre }
+
+    static func parent(_ e: Ecran) -> Ecran {
+        switch e {
+        case .idees, .apercu, .creation: return .aujourdhui
+        case .charte, .regles: return .reglages
+        default: return e
+        }
+    }
+}
+
 /// La fenêtre du studio : barre d'icônes à gauche, la page de verre (en-tête + écran) à droite,
 /// le panneau « Demander à Claude » en inspecteur.
 private struct VueStudio: View {
@@ -258,27 +285,15 @@ private struct VueStudio: View {
 
     private var ecranCourant: Ecran { etat.ecran ?? .aujourdhui }
 
+    /// L'icône allumée : celle de l'écran, ou de son parent (Idées, Aperçu → Accueil ; Charte, Règles → Réglages).
     private var selection: Binding<Ecran> {
-        Binding(get: { ecranCourant },
+        Binding(get: { BarreStudio.parent(ecranCourant) },
                 set: { e in withAnimation(j.anim(.page)) { etat.ecran = e } })
-    }
-
-    private var badges: [Ecran: Int] {
-        var b: [Ecran: Int] = [:]
-        switch etat.vue?.statut {
-        case "idees_proposees":
-            let n = etat.vue?.idees?.count ?? 0
-            if n > 0 { b[.idees] = n }
-        case "brouillon_pret":
-            b[.apercu] = 1
-        default: break
-        }
-        return b
     }
 
     var body: some View {
         HStack(spacing: 0) {
-            BarreIcones(ecrans: etat.apparence.ecransVisibles, selection: selection, badges: badges,
+            BarreIcones(elements: BarreStudio.elements(etat.apparence), selection: selection,
                         nouveau: { etat.montrer(.creation) }) {
                 PiedBarre()
             }
@@ -670,14 +685,19 @@ struct CommandesStudio: Commands {
                 .disabled(inactif)
         }
         CommandMenu("Aller") {
-            ForEach(Array(etat.apparence.ecransVisibles.enumerated()), id: \.element) { i, e in
+            ForEach(Array(BarreStudio.ecrans(etat.apparence).enumerated()), id: \.element) { i, e in
                 if i < 9, let c = "\(i + 1)".first {
-                    Button(e.titre) { etat.montrer(e) }
+                    Button(BarreStudio.titre(e)) { etat.montrer(e) }
                         .keyboardShortcut(KeyEquivalent(c), modifiers: .command)
                         .disabled(inactif)
                 } else {
-                    Button(e.titre) { etat.montrer(e) }.disabled(inactif)
+                    Button(BarreStudio.titre(e)) { etat.montrer(e) }.disabled(inactif)
                 }
+            }
+            Divider()
+            // Hors de la barre, toujours accessibles au clavier et au menu.
+            ForEach([Ecran.idees, .apercu, .charte, .regles], id: \.self) { e in
+                Button(e.titre) { etat.montrer(e) }.disabled(inactif)
             }
             Divider()
             Button("Jour précédent") { NavigationJour.changer(etat, de: -1) }

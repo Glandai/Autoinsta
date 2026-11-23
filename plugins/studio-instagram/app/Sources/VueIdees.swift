@@ -1,208 +1,244 @@
 import SwiftUI
 
-// Écran « Idées » (DESIGN.md §4.5) : les idées du jour en cartes douces (numéro, couverture 4:5, pastilles
-// format et pilier, titre, pitch, « Pourquoi » replié). Un clic sélectionne ; la barre collante monte avec
-// « Créer ce post », qui enregistre le choix et ouvre l'assistant de création à l'étape « Claude au travail ».
+// Écran « Idées » (ouvert depuis l'accueil quand des idées attendent) et composants partagés avec l'assistant de
+// création (conception/simplification.md, point 1) : trois grandes cartes d'idées, et seulement trois actions —
+// choisir une carte, « D'autres idées » (Claude en propose trois nouvelles), « Mon idée ».
 
 struct VueIdees: View {
     @EnvironmentObject var etat: EtatApp
     @Environment(\.jetons) private var j
-    @Local private var selection: Int? = nil
-    @Local private var pourquoiOuverts: Set<Int> = []
 
-    private var idees: [Idee] { etat.vue?.idees ?? [] }
     private var statut: String { etat.vue?.statut ?? "nouveau" }
-    private var aChoisir: Bool { statut == "idees_proposees" }
-    private var peutChoisir: Bool { aChoisir && !etat.occupe }
-    private var retenue: Int? { etat.vue?.choix?.numero }
-
-    private var barreVisible: Bool {
-        if aChoisir { return selection != nil }
-        return retenue != nil && ["idee_choisie", "brouillon_pret"].contains(statut)
+    private var retenue: String? {
+        guard ["idee_choisie", "brouillon_pret"].contains(statut), let c = etat.vue?.choix else { return nil }
+        return (c.titre ?? c.libre)?.nonVide ?? "ton idée"
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: j.esp.sections) {
-                EnTeteEcran(surTitre: surTitre, titre: titre, chapo: chapo, voixDeClaude: etat.vue?.lecture_du_feed?.nonVide != nil)
-                if idees.isEmpty {
-                    EtatVide(symbole: "lightbulb", titre: "Pas encore d'idées",
-                             phrase: "Les idées arrivent chaque matin à \(etat.reglages?.routine.heure_idees ?? "8:00"). "
-                                 + "L'app s'ouvrira ici toute seule. Tu peux aussi écrire la tienne avec le « + ».",
-                             actionTitre: etat.claudeTravaille ? nil : "Demander des idées maintenant",
-                             action: { Task { _ = await etat.lancerClaude(.matin) } })
-                } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 280, maximum: 400), spacing: j.esp.gouttiere, alignment: .top)],
-                              alignment: .leading, spacing: j.esp.gouttiere) {
-                        ForEach(Array(idees.enumerated()), id: \.element.id) { i, idee in
-                            carte(idee).entreeEnCascade(i)
+        VStack(alignment: .leading, spacing: j.esp.sections * 0.7) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(surTitre).typo(.surtitre)
+                Text(retenue.map { "Idée retenue : « \($0) »." } ?? "Choisis l'histoire du jour.")
+                    .typo(.titre1)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            if retenue != nil {
+                Button { etat.montrer(.creation) } label: { Label("Voir où en est le post", systemImage: "arrow.right") }
+                    .buttonStyle(BoutonPrincipal())
+                    .keyboardShortcut(.defaultAction)
+                Spacer(minLength: 0)
+            } else {
+                TroisCartesIdees(lancer: { Task { _ = await etat.lancerClaude(.idees) } }) { idee in
+                    Task {
+                        await etat.decider("choix", "\(idee.numero)")
+                        if etat.vue?.statut == "idee_choisie" || etat.claudeTravaille { etat.montrer(.creation) }
+                    }
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
+                HStack {
+                    Spacer()
+                    ActionsIdees { texte in
+                        Task {
+                            await etat.decider("libre", texte)
+                            if etat.vue?.statut == "idee_choisie" || etat.claudeTravaille { etat.montrer(.creation) }
                         }
                     }
                 }
             }
-            .frame(maxWidth: j.esp.largeurPage, alignment: .leading)
-            .padding(j.esp.page)
-            .padding(.bottom, barreVisible ? 110 : 0)
-            .frame(maxWidth: .infinity)
         }
-        .overlay(alignment: .bottom) {
-            if barreVisible {
-                barre.transition(j.transition(.bandeau))
-            }
-        }
-        .animation(j.anim(.doux), value: barreVisible)
-        .onChange(of: statut) { _, _ in if !aChoisir { selection = nil } }
+        .frame(maxWidth: j.esp.largeurPage, maxHeight: .infinity, alignment: .topLeading)
+        .padding(j.esp.page)
+        .frame(maxWidth: .infinity)
     }
-
-    // MARK: En-tête
 
     private var surTitre: String {
         guard let d = etat.vue?.date_longue?.nonVide else { return "Idées du jour" }
         // « Jeudi 19 novembre » : seule la première lettre en capitale.
         return "Idées du jour · " + d.prefix(1).uppercased() + d.dropFirst()
     }
+}
 
-    private var titre: String {
-        if !aChoisir, let c = etat.vue?.choix, let t = (c.titre ?? c.libre)?.nonVide { return "Idée retenue : « \(t) »." }
-        return "Choisis l'histoire du jour."
+// MARK: - Composants partagés (Idées, assistant de création)
+
+extension EtatApp {
+    /// L'exécution de Claude qui prépare des idées pour le jour affiché (`idees`, ou la routine du matin).
+    var executionIdeesDuJour: ExecutionClaude? {
+        guard let e = execution, !e.aucune, e.jour == nil || e.jour == jour,
+              e.tacheClaude == .idees || e.tacheClaude == .matin else { return nil }
+        return e
     }
 
-    private var chapo: String? {
-        if let l = etat.vue?.lecture_du_feed?.nonVide { return l }
-        return aChoisir ? "Choisis une idée : Claude prépare le post complet, prêt à valider." : nil
+    /// Vrai quand rien n'empêche de lancer Claude ou d'envoyer une décision.
+    var librePourIdees: Bool { !occupe && !lancementEnCours && !claudeTravaille }
+}
+
+/// Les trois idées du jour en grandes cartes ; un clic choisit l'idée. Pendant que Claude en prépare, son
+/// avancement s'affiche à la place des cartes. Sans idée ni travail en cours : `lancer` (bouton).
+struct TroisCartesIdees: View {
+    @EnvironmentObject var etat: EtatApp
+    @Environment(\.jetons) private var j
+    var hauteurCouverture: CGFloat = 200
+    let lancer: () -> Void
+    let choisir: (Idee) -> Void
+
+    private var idees: [Idee] { Array((etat.vue?.idees ?? []).prefix(3)) }
+
+    var body: some View {
+        Group {
+            if let e = etat.executionIdeesDuJour, e.enCours || (idees.isEmpty && !e.reussie) {
+                attente(e)
+            } else if idees.isEmpty {
+                vide
+            } else {
+                HStack(alignment: .top, spacing: j.esp.gouttiere) {
+                    ForEach(Array(idees.enumerated()), id: \.element.id) { i, idee in
+                        carte(idee).entreeEnCascade(i)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .animation(j.anim(.doux), value: idees.map(\.numero))
     }
 
-    // MARK: Carte d'une idée
+    private func attente(_ e: ExecutionClaude) -> some View {
+        VStack(spacing: j.esp.blocs) {
+            Illustration(e.etat == "erreur" ? .erreur : .idee, taille: 140).frame(width: 140, height: 140)
+            CarteActiviteClaude(execution: e, compacte: true,
+                                arreter: { Task { await etat.annulerClaude() } },
+                                reessayer: lancer,
+                                reconnecter: { Task { await etat.accepterInvitation() } })
+                .frame(maxWidth: 480)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var vide: some View {
+        VStack(spacing: j.esp.blocs) {
+            Illustration(.idee, taille: 140).frame(width: 140, height: 140)
+            if let inv = etat.invitationClaude {
+                Text(inv.texte).typo(.chapo).multilineTextAlignment(.center).frame(maxWidth: 460)
+                Button { Task { await etat.accepterInvitation() } } label: { Label(inv.libelleBouton, systemImage: inv.symbole) }
+                    .buttonStyle(BoutonPilule(.claire))
+            } else if etat.lancementEnCours {
+                ProgressView().controlSize(.small)
+                Text("Claude se met au travail…").typo(.voixCarte, couleur: j.texteSecondaire)
+            } else {
+                Button(action: lancer) { Label("Proposer trois idées", systemImage: "sparkles") }
+                    .buttonStyle(BoutonPilule(.claire))
+                    .disabled(!etat.librePourIdees)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
 
     private func carte(_ idee: Idee) -> some View {
-        let choisie = selection == idee.numero || (!aChoisir && retenue == idee.numero)
         let forme = RoundedRectangle(cornerRadius: j.rayons.photo, style: .continuous)
-        return Carte(style: peutChoisir ? .cliquable : .simple, choisie: choisie) {
-            // Couverture basse (bandeau de 150 pt) avec les vignettes à côté : titre, pitch et pastilles restent
-            // visibles sans défiler dans une fenêtre de 860 pt.
-            VStack(alignment: .leading, spacing: j.esp.pile + 2) {
-                HStack(spacing: 4) {
+        return Button { choisir(idee) } label: {
+            Carte(style: .cliquable) {
+                VStack(alignment: .leading, spacing: j.esp.pile + 2) {
                     ImageLocale(chemin: idee.couverture)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 150)
+                        .frame(height: hauteurCouverture)
                         .clipShape(forme)
-                    if let v = idee.vignettes, !v.isEmpty {
-                        VStack(spacing: 4) {
-                            ForEach(Array(v.prefix(2).enumerated()), id: \.offset) { _, c in
-                                ImageLocale(chemin: c).frame(width: 73, height: 73).clipShape(forme)
-                            }
-                        }
+                    HStack(spacing: 6) {
+                        Text("\(idee.numero)").font(Font.jakarta(15, graisse: 700)).foregroundStyle(j.accentTexte)
+                        Pastille(LibellesIdee.format(idee), symbole: LibellesIdee.symboleFormat(idee.format))
                     }
-                }
-                .overlay(alignment: .topTrailing) {
-                    if idee.type == "exploration" {
-                        Pastille("Exploration", symbole: "binoculars", ton: .douce).padding(8)
-                    }
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("\(idee.numero)").typo(.numero)
                     Text(idee.titre ?? "Idée \(idee.numero)")
                         .typo(.titre3)
-                        .lineLimit(2)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
+                    if let p = idee.pitch?.nonVide {
+                        Text(p).typo(.legende).lineLimit(4).multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                    Label("Choisir cette idée", systemImage: "arrow.right")
+                        .font(Font.jakarta(13.5, graisse: 600))
+                        .foregroundStyle(j.accentTexte)
                 }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 6) { pastilles(idee) }
-                    VStack(alignment: .leading, spacing: 6) { pastilles(idee) }
-                }
-                if let p = idee.pitch?.nonVide {
-                    Text(p).typo(.corps).lineLimit(4).fixedSize(horizontal: false, vertical: true)
-                }
-                if let p = idee.pourquoi?.nonVide { pourquoi(idee.numero, p, musique: idee.musique?.nonVide) }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard peutChoisir else { return }
-            withAnimation(j.anim(.selection)) { selection = selection == idee.numero ? nil : idee.numero }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityAddTraits(peutChoisir ? .isButton : [])
-        .accessibilityAddTraits(choisie ? .isSelected : [])
-    }
-
-    @ViewBuilder private func pastilles(_ idee: Idee) -> some View {
-        Pastille(LibellesIdee.format(idee), symbole: LibellesIdee.symboleFormat(idee.format))
-        if let p = idee.pilier_libelle?.nonVide { Pastille(p, symbole: LibellesIdee.symbolePilier(p)) }
-    }
-
-    private func pourquoi(_ numero: Int, _ texte: String, musique: String?) -> some View {
-        let ouvert = pourquoiOuverts.contains(numero)
-        return VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation(j.anim(.doux)) {
-                    if ouvert { pourquoiOuverts.remove(numero) } else { pourquoiOuverts.insert(numero) }
-                }
-            } label: {
-                Label("Pourquoi aujourd'hui", systemImage: ouvert ? "chevron.down" : "chevron.right")
-            }
-            .buttonStyle(.discret)
-            if ouvert {
-                VoixDeClaude(texte, compacte: true).transition(.opacity)
-                if let m = musique {
-                    Label(m, systemImage: "music.note").typo(.legende).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    // MARK: Barre collante
-
-    private var barre: some View {
-        let forme = RoundedRectangle(cornerRadius: j.rayons.feuille, style: .continuous)
-        let numero = aChoisir ? selection : retenue
-        let idee = idees.first { $0.numero == numero }
-        return HStack(spacing: j.esp.blocs) {
-            if let c = idee?.couverture {
-                ImageLocale(chemin: c)
-                    .frame(width: 40, height: 50)
-                    .clipShape(RoundedRectangle(cornerRadius: j.rayons.photo, style: .continuous))
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(aChoisir ? "Idée \(numero ?? 0)" : "Idée retenue").typo(.surtitre)
-                Text(idee?.titre ?? etat.vue?.choix?.titre ?? "Ton idée").typo(.titre3).lineLimit(1)
-            }
-            Spacer(minLength: j.esp.blocs)
-            if aChoisir {
-                Button { creer() } label: { Label("Créer ce post", systemImage: "wand.and.stars") }
-                    .buttonStyle(BoutonPrincipal(enCours: etat.occupe))
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(etat.occupe || etat.lancementEnCours || etat.claudeTravaille)
-                    .help(etat.claudeTravaille ? "Claude termine une autre tâche : un instant." : "Claude prépare le post complet")
-            } else {
-                Button { etat.montrer(.creation) } label: { Label("Voir où en est le post", systemImage: "arrow.right") }
-                    .buttonStyle(BoutonPrincipal())
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(.horizontal, j.esp.carte)
-        .padding(.vertical, 14)
-        .background(FondFlottant(forme: forme))
-        .overlay(LisereHaut(rayon: j.rayons.feuille))
-        .ombre(.flottante)
-        .frame(maxWidth: 760)
-        .padding(.horizontal, j.esp.page)
-        .padding(.bottom, 24)
-    }
-
-    private func creer() {
-        guard let n = selection, peutChoisir else { return }
-        Task {
-            await etat.decider("choix", "\(n)")
-            if etat.vue?.statut == "idee_choisie" || etat.claudeTravaille {
-                selection = nil
-                etat.montrer(.creation)
-            }
-        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .disabled(!etat.librePourIdees)
+        .accessibilityLabel("Idée \(idee.numero) : \(idee.titre ?? "")")
+        .accessibilityHint("Choisir cette idée")
     }
 }
 
-/// Libellés et symboles d'une idée, partagés par l'écran Idées et l'assistant de création.
+/// « D'autres idées » et « Mon idée » : deux pilules claires, chacune avec un petit champ dans une bulle.
+struct ActionsIdees: View {
+    @EnvironmentObject var etat: EtatApp
+    @Environment(\.jetons) private var j
+    let monIdee: (String) -> Void
+    @Local private var autresOuvert = false
+    @Local private var monIdeeOuvert = false
+    @Local private var envie = ""
+    @Local private var texte = ""
+
+    var body: some View {
+        HStack(spacing: j.esp.blocs) {
+            Button { autresOuvert = true } label: { Label("D'autres idées", systemImage: "arrow.triangle.2.circlepath") }
+                .buttonStyle(BoutonPilule(.claire))
+                .disabled(!etat.librePourIdees)
+                .popover(isPresented: $autresOuvert, arrowEdge: .top) {
+                    bulle(titre: "D'autres idées",
+                          aide: "Claude en propose trois nouvelles. Une envie ? (facultatif)",
+                          champ: $envie, exemple: "par exemple « plus de portraits »",
+                          bouton: "Proposer trois idées", symbole: "sparkles", vide: true, valider: autresIdees)
+                }
+            Button { monIdeeOuvert = true } label: { Label("Mon idée", systemImage: "square.and.pencil") }
+                .buttonStyle(BoutonPilule(.claire))
+                .disabled(!etat.librePourIdees)
+                .popover(isPresented: $monIdeeOuvert, arrowEdge: .top) {
+                    bulle(titre: "Ton idée", aide: "Écris-la comme un titre de magazine : Claude prépare le reste.",
+                          champ: $texte, exemple: "par exemple « les mains pendant les discours »",
+                          bouton: "Créer ce post", symbole: "wand.and.stars", vide: false, valider: envoyerMonIdee)
+                }
+        }
+    }
+
+    private func bulle(titre: String, aide: String, champ: Binding<String>, exemple: String, bouton: String,
+                       symbole: String, vide: Bool, valider: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: j.esp.pile + 4) {
+            Text(titre).typo(.titre3)
+            Text(aide).typo(.legende).fixedSize(horizontal: false, vertical: true)
+            ChampDoux(texte: champ, exemple: exemple, lignes: 1...3, envoyer: valider)
+            HStack {
+                Spacer()
+                Button(action: valider) { Label(bouton, systemImage: symbole) }
+                    .buttonStyle(BoutonPilule(.sombre))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!etat.librePourIdees || (!vide && champ.wrappedValue.nonVide == nil))
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
+        .environment(\.jetons, j)
+    }
+
+    private func autresIdees() {
+        guard etat.librePourIdees else { return }
+        let consigne = envie.nonVide
+        autresOuvert = false
+        envie = ""
+        Task { _ = await etat.lancerClaude(.idees, consigne: consigne) }
+    }
+
+    private func envoyerMonIdee() {
+        guard etat.librePourIdees, let t = texte.nonVide else { return }
+        monIdeeOuvert = false
+        texte = ""
+        monIdee(t)
+    }
+}
+
+/// Libellés et symboles d'une idée.
 enum LibellesIdee {
     static func format(_ idee: Idee) -> String {
         let f = idee.format_libelle ?? idee.format ?? "Post"
@@ -216,20 +252,6 @@ enum LibellesIdee {
         case "reel": return "play.rectangle"
         case "image": return "photo"
         default: return "square.on.square"
-        }
-    }
-
-    static func symbolePilier(_ libelle: String) -> String {
-        switch libelle.lowercased() {
-        case "éditorial": return "newspaper"
-        case "documentaire": return "camera.viewfinder"
-        case "détails": return "magnifyingglass"
-        case "lieux": return "building.columns"
-        case "portraits": return "person.crop.rectangle"
-        case "love story": return "heart"
-        case "atmosphère": return "cloud.sun"
-        case "vision artistique": return "paintbrush.pointed"
-        default: return "tag"
         }
     }
 }

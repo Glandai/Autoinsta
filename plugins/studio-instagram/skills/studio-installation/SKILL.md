@@ -38,7 +38,7 @@ L'installation se fait avec elle, dans l'application Claude. Si ton prompt syst�
 
 ## 3. Les paramètres du compte (`config/compte.yaml`)
 
-Le fichier est pré-rempli à partir du profil public. Deux façons de le compléter : dans l'app (`./studio ui reglages --forcer`, écran Réglages, « Enregistrer » ; relis ensuite `config/compte.yaml` avec elle), ou ici :
+Le fichier part vide (`[À COMPLÉTER : …]`) : le studio sert à n'importe quel compte. L'onboarding de l'app pose les questions (nom, compte Instagram, activité, ville, voix, langue, approche) ; si l'activité n'est pas la photo de mariage, l'app demande à Claude d'adapter la charte (`./studio claude lancer charte`). Deux façons de le compléter : dans l'app (`./studio ui reglages --forcer`, écran Réglages, « Enregistrer » ; relis ensuite `config/compte.yaml` avec elle), ou ici :
 - AskUserQuestion, en une fois : la voix des légendes (« je » ou « nous »), la langue (français, anglais, bilingue français puis anglais), le rythme (chaque jour, 5, 3 ou 2 fois par semaine).
 - L'heure de publication qu'elle préfère (par défaut 18:30 en semaine) : ajuste `publication.creneaux` (supprime les jours sans post).
 - Son approche en trois à cinq phrases, avec ses mots : manière de travailler, argentique ou numérique, rapport aux mariés, ce qui distingue son travail. Recopie ses mots tels quels dans `approche` : c'est la seule source autorisée pour parler de sa pratique.

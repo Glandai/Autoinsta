@@ -39,7 +39,8 @@ enum Ecran: String, CaseIterable, Identifiable {
 
 /// Ce que l'app confie à Claude : `./studio claude lancer <tâche>` (ARCHITECTURE.md §4.1).
 enum TacheClaude: String, CaseIterable, Identifiable, Codable {
-    case matin, creation, retouche, galerie, bilan, demande
+    /// `idees` : trois nouvelles idées depuis « + » (consigne facultative) ; `charte` : la charte adaptée à l'activité.
+    case matin, idees, creation, retouche, galerie, bilan, demande, charte
     var id: String { rawValue }
 
     /// Nom court, pour un bouton ou un historique.
@@ -51,6 +52,8 @@ enum TacheClaude: String, CaseIterable, Identifiable, Codable {
         case .galerie: return "Analyser une galerie"
         case .bilan: return "Bilan de la semaine"
         case .demande: return "Demande à Claude"
+        case .idees: return "Nouvelles idées"
+        case .charte: return "Adapter la charte"
         }
     }
 
@@ -63,6 +66,8 @@ enum TacheClaude: String, CaseIterable, Identifiable, Codable {
         case .galerie: return "Claude analyse la galerie"
         case .bilan: return "Claude fait le bilan de la semaine"
         case .demande: return "Claude s'occupe de ta demande"
+        case .idees: return "Claude cherche de nouvelles idées"
+        case .charte: return "Claude adapte ta charte à ton activité"
         }
     }
 
@@ -75,13 +80,17 @@ enum TacheClaude: String, CaseIterable, Identifiable, Codable {
         case .galerie: return "photo.stack"
         case .bilan: return "chart.line.uptrend.xyaxis"
         case .demande: return "text.bubble"
+        case .idees: return "sparkles"
+        case .charte: return "text.book.closed"
         }
     }
 
-    /// Les tâches d'une journée partagent une conversation de Claude (et suivent le jour affiché).
-    var duJour: Bool { self == .matin || self == .creation || self == .retouche }
-    /// `consigne` obligatoire (le texte de la retouche ou de la demande).
+    /// Tâches d'une journée : elles portent sur le jour affiché, et leur fin y ramène l'app.
+    var duJour: Bool { self == .matin || self == .idees || self == .creation || self == .retouche }
+    /// `consigne` obligatoire (le texte de la retouche ou de la demande) ; facultative pour `idees`.
     var demandeConsigne: Bool { self == .retouche || self == .demande }
+    /// `consigne` possible (« plutôt des détails », « un Reel »…).
+    var accepteConsigne: Bool { demandeConsigne || self == .idees }
     /// `serie` obligatoire (l'identifiant de la galerie).
     var demandeSerie: Bool { self == .galerie }
 }
@@ -154,6 +163,8 @@ final class EtatApp: ObservableObject {
     /// Lien de secours vers la page de connexion, si le navigateur ne s'est pas ouvert.
     @Published var lienConnexion: URL?
     @Published var installationEnCours = false
+    /// L'app crée le studio avec son moteur embarqué (version .pkg).
+    @Published var creationStudioEnCours = false
     /// Entre le clic et la réponse du moteur à `lancer`.
     @Published var lancementEnCours = false
     /// Connexion à Instagram (`chargerInstagram()`) ; nil tant qu'elle n'a pas été vérifiée.
@@ -178,6 +189,10 @@ final class EtatApp: ObservableObject {
     private var dernierSigneDeVie = Date.distantPast
     private var controleEnCours = false
     private var jetonConnexion: UUID?
+    private var chargementJour: Task<Void, Never>?
+    private var jourARecharger = false
+    private var listeARecharger = false
+    private var lectureExecutionEnCours = false
 
     init() {
         dossier = EtatApp.trouverDossier()
@@ -187,9 +202,7 @@ final class EtatApp: ObservableObject {
     // MARK: Démarrage et surveillance
 
     static func trouverDossier() -> URL {
-        let support = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Studio Instagram/reglages.json")
-        if let data = try? Data(contentsOf: support),
+        if let data = try? Data(contentsOf: fichierPointeur),
            let objet = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let chemin = objet["dossier"] as? String {
             return URL(fileURLWithPath: chemin)
@@ -241,6 +254,55 @@ final class EtatApp: ObservableObject {
         }
     }
 
+    // MARK: Création du studio par l'app installée (.pkg)
+
+    /// L'installeur du moteur livré dans l'app (version .pkg), s'il existe.
+    var installeurEmbarque: URL? {
+        guard let u = Bundle.main.resourceURL?.appendingPathComponent("plugin/installer.sh"),
+              FileManager.default.fileExists(atPath: u.path) else { return nil }
+        return u
+    }
+
+    /// Le dossier de travail proposé : `~/Studio-Instagram`.
+    var dossierStudioParDefaut: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Studio-Instagram")
+    }
+
+    /// Crée le studio avec le moteur et le Python livrés dans l'app : aucune commande, aucun outil à installer.
+    func creerStudio() async {
+        guard let installeur = installeurEmbarque, !creationStudioEnCours else { return }
+        creationStudioEnCours = true
+        defer { creationStudioEnCours = false }
+        let cible = dossierStudioParDefaut
+        let app = Bundle.main.bundlePath
+        let resultat: (Int32, String) = await Task.detached(priority: .userInitiated) {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/bash")
+            p.arguments = [installeur.path, "--embarque=" + app, cible.path]
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+            p.environment = env
+            let sortie = Pipe()
+            p.standardOutput = sortie
+            p.standardError = sortie
+            do {
+                try p.run()
+                let data = sortie.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                return (p.terminationStatus, String(decoding: data, as: UTF8.self))
+            } catch {
+                return (-1, error.localizedDescription)
+            }
+        }.value
+        if resultat.0 == 0 && FileManager.default.isExecutableFile(atPath: cible.appendingPathComponent("studio").path) {
+            changerDossier(cible)
+            message = "Ton studio est prêt."
+        } else {
+            let fin = resultat.1.split(separator: "\n").suffix(3).joined(separator: " ")
+            erreur = "Le studio n'a pas pu être créé. " + (fin.isEmpty ? "" : "(" + fin + ")")
+        }
+    }
+
     /// Un autre studio : tout ce qui venait de l'ancien est oublié, puis tout est rechargé.
     private func changerDossier(_ url: URL) {
         dossier = url
@@ -257,15 +319,25 @@ final class EtatApp: ObservableObject {
         Task { await toutCharger() }
     }
 
+    /// Pointeur `~/Library/Application Support/Studio Instagram/reglages.json` : le studio que l'app suit.
+    static var fichierPointeur: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Studio Instagram/reglages.json")
+    }
+
+    /// Toutes les 1,5 s, sur le fil principal mais sans lecture inutile : quelques dates de modification ;
+    /// un fichier n'est relu (et un chargement lancé) que s'il a changé.
     private func surveiller(premierPassage: Bool) {
         // Le studio qui sollicite l'app l'indique dans le pointeur : l'app le suit.
-        let pointe = EtatApp.trouverDossier()
-        if pointe.standardizedFileURL.path != dossier.standardizedFileURL.path {
-            changerDossier(pointe)
-            return
+        if aChange(EtatApp.fichierPointeur) {
+            let pointe = EtatApp.trouverDossier()
+            if pointe.standardizedFileURL.path != dossier.standardizedFileURL.path {
+                changerDossier(pointe)
+                return
+            }
         }
         let demandeURL = dossier.appendingPathComponent(".ui/demande.json")
-        if let data = try? Data(contentsOf: demandeURL),
+        if aChange(demandeURL), let data = try? Data(contentsOf: demandeURL),
            let d = try? JSONDecoder().decode(Demande.self, from: data), d.id != derniereDemande {
             derniereDemande = d.id
             if !premierPassage || EtatApp.estRecente(d.le) {
@@ -275,18 +347,20 @@ final class EtatApp: ObservableObject {
                     NSApp.activate(ignoringOtherApps: true)
                     NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
                 }
-                Task { await chargerJour() }
+                demanderChargementJour(liste: true)
             }
         }
-        var change = false
+        // Fichiers du jour affiché : decision.json seul ne change que la vue du jour, pas la liste des jours.
+        var vueChangee = false, listeChangee = false
         for nom in ["etat.json", "idees.json", "post.json", "decision.json"] {
             if aChange(dossier.appendingPathComponent("jours/\(jour)/\(nom)")) {
-                change = true
+                vueChangee = true
+                if nom != "decision.json" { listeChangee = true }
                 if nom == "post.json" && !premierPassage { versionImages += 1 }
             }
         }
-        if change && !premierPassage && !occupe && !modificationEnCours {
-            Task { await chargerJour() }
+        if vueChangee && !premierPassage && !occupe && !modificationEnCours {
+            demanderChargementJour(liste: listeChangee)
         }
         // Claude : une nouvelle exécution (lancée par l'app, la planification ou Claude) remplace actuel.json.
         let actuel = dossier.appendingPathComponent(".ui/claude/actuel.json")
@@ -298,6 +372,23 @@ final class EtatApp: ObservableObject {
             Task { await chargerApparence(silencieux: true) }
         }
         ajusterSuiviRapide()
+    }
+
+    /// Recharge le jour (et la liste des jours si `liste`) sans empiler les appels : une demande faite pendant un
+    /// chargement en relance un seul, à la fin.
+    private func demanderChargementJour(liste: Bool) {
+        jourARecharger = true
+        listeARecharger = listeARecharger || liste
+        guard chargementJour == nil else { return }
+        chargementJour = Task {
+            while jourARecharger {
+                let l = listeARecharger
+                jourARecharger = false
+                listeARecharger = false
+                await chargerJour(liste: l)
+            }
+            chargementJour = nil
+        }
     }
 
     /// Vrai si la date de modification du fichier a changé depuis le dernier passage (apparition et disparition comprises).
@@ -325,7 +416,15 @@ final class EtatApp: ObservableObject {
 
     // MARK: Appels au moteur
 
-    nonisolated private static func executer(_ arguments: [String], dossier: URL) async throws -> Data {
+    /// Lance `./studio …` et décode sa réponse, le tout hors du fil principal : le processus tourne sur une file
+    /// globale, et le décodage dans cette fonction `nonisolated` (exécuteur concurrent, jamais le fil principal).
+    nonisolated private static func executer<T: Decodable & Sendable>(_ arguments: [String], dossier: URL,
+                                                          _ type: T.Type) async throws -> T {
+        let data = try await executerBrut(arguments, dossier: dossier)
+        return try decoder(T.self, data)
+    }
+
+    nonisolated private static func executerBrut(_ arguments: [String], dossier: URL) async throws -> Data {
         try await withCheckedThrowingContinuation { suite in
             DispatchQueue.global(qos: .userInitiated).async {
                 let p = Process()
@@ -349,12 +448,11 @@ final class EtatApp: ObservableObject {
         }
     }
 
-    func appeler<T: Decodable>(_ type: T.Type, _ arguments: [String]) async throws -> T {
-        guard studioInstalle else {
-            throw ErreurMoteur(message: "Le studio n'est pas installé dans \(dossier.path). Lance /studio-instagram:studio-installation dans Claude, ou choisis le bon dossier.")
-        }
-        let data = try await EtatApp.executer(arguments, dossier: dossier)
-        if let e = try? JSONDecoder().decode(ReponseErreur.self, from: data), let m = e.erreur {
+    /// Une erreur du moteur est exactement `{"erreur": "…"}` (une exécution ou l'état d'Instagram ont aussi un champ
+    /// `erreur`, qui n'en est pas une).
+    nonisolated private static func decoder<T: Decodable & Sendable>(_ type: T.Type, _ data: Data) throws -> T {
+        if let objet = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           objet.count == 1, let m = objet["erreur"] as? String {
             throw ErreurMoteur(message: m)
         }
         do {
@@ -363,6 +461,23 @@ final class EtatApp: ObservableObject {
             let extrait = String(data: data.prefix(400), encoding: .utf8) ?? ""
             throw ErreurMoteur(message: "Réponse inattendue du studio : \(error.localizedDescription) \(extrait)")
         }
+    }
+
+    /// Lit `.ui/claude/<id>.json` hors du fil principal.
+    nonisolated private static func lireExecution(_ url: URL) async -> ExecutionClaude? {
+        await withCheckedContinuation { suite in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let e = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(ExecutionClaude.self, from: $0) }
+                suite.resume(returning: e)
+            }
+        }
+    }
+
+    func appeler<T: Decodable & Sendable>(_ type: T.Type, _ arguments: [String]) async throws -> T {
+        guard studioInstalle else {
+            throw ErreurMoteur(message: "Le studio n'est pas installé dans \(dossier.path). Lance /studio-instagram:studio-installation dans Claude, ou choisis le bon dossier.")
+        }
+        return try await EtatApp.executer(arguments, dossier: dossier, type)
     }
 
     private func fichierTemporaire(_ data: Data, extension ext: String) throws -> URL {
@@ -413,27 +528,40 @@ final class EtatApp: ObservableObject {
 
     // MARK: Chargements
 
+    /// Tout, en parallèle (chaque appel au moteur tourne hors du fil principal).
     func toutCharger() async {
-        await chargerApparence(silencieux: true)
-        await chargerJour()
+        async let a: Void = chargerApparence(silencieux: true)
+        async let j: Void = chargerJour()
         async let r: Void = chargerReglages()
         async let g: Void = chargerGaleries()
         async let s: Void = chargerSante()
         async let c: Void = chargerToutClaude()
-        _ = await (r, g, s, c)
+        _ = await (a, j, r, g, s, c)
     }
 
     private func chargerToutClaude() async {
-        await chargerExecution()
-        await chargerClaude(silencieux: true)
-        await chargerHistoriqueClaude()
-        await chargerPlanification(silencieux: true)
+        async let e: Void = chargerExecution()
+        async let c: Void = chargerClaude(silencieux: true)
+        async let h: Void = chargerHistoriqueClaude()
+        async let p: Void = chargerPlanification(silencieux: true)
+        _ = await (e, c, h, p)
     }
 
-    func chargerJour() async {
+    /// Le jour affiché (`vue`) et, si `liste`, la liste des jours, en parallèle. Une réponse arrivée après un
+    /// changement de jour est ignorée.
+    func chargerJour(liste: Bool = true) async {
+        let j = jour
         do {
-            vue = try await appeler(VueJour.self, ["app", "jour", jour])
-            jours = try await appeler([ResumeJour].self, ["app", "jours"])
+            if liste {
+                async let v = appeler(VueJour.self, ["app", "jour", j])
+                async let l = appeler([ResumeJour].self, ["app", "jours"])
+                let (nouvelle, tous) = try await (v, l)
+                if j == jour { vue = nouvelle }
+                jours = tous
+            } else {
+                let nouvelle = try await appeler(VueJour.self, ["app", "jour", j])
+                if j == jour { vue = nouvelle }
+            }
         } catch {
             erreur = error.localizedDescription
         }
@@ -479,7 +607,7 @@ final class EtatApp: ObservableObject {
     func montrer(_ e: Ecran, jour j: String? = nil) {
         if let j = j, j != jour {
             jour = j
-            Task { await chargerJour() }
+            demanderChargementJour(liste: false)
         }
         withAnimation(animationEcran) { ecran = e }
     }
@@ -886,12 +1014,17 @@ final class EtatApp: ObservableObject {
         }
         let url = dossier.appendingPathComponent(".ui/claude/\(e.id).json")
         let date = EtatApp.dateModification(url)
-        if let date = date, date != signatureExecution,
-           let data = try? Data(contentsOf: url),
-           let lue = try? JSONDecoder().decode(ExecutionClaude.self, from: data), lue.id == e.id {
-            signatureExecution = date
-            dernierSigneDeVie = Date()
-            appliquer(lue)
+        if let date = date, date != signatureExecution {
+            guard !lectureExecutionEnCours else { return }
+            lectureExecutionEnCours = true
+            Task {
+                let lue = await EtatApp.lireExecution(url)
+                lectureExecutionEnCours = false
+                guard let lue = lue, lue.id == e.id, execution?.id == e.id else { return }
+                signatureExecution = date
+                dernierSigneDeVie = Date()
+                appliquer(lue)
+            }
         } else if Date().timeIntervalSince(dernierSigneDeVie) > 10, !controleEnCours {
             dernierSigneDeVie = Date()
             controleEnCours = true
@@ -923,6 +1056,7 @@ final class EtatApp: ObservableObject {
         switch tache {
         case .galerie?: await chargerGaleries()
         case .bilan?: await chargerMemoire()
+        case .charte?: await chargerCharte()
         case .demande?:
             await chargerReglages()
             await chargerGaleries()
@@ -979,7 +1113,9 @@ final class EtatApp: ObservableObject {
     @discardableResult
     func enregistrerApparence(_ a: Apparence) async -> Bool {
         let n = a.normalisee()
-        guard await envoyer(n, action: "enregistrer-apparence") else { return false }
+        let reglable = ApparenceReglable(nom_affiche: n.nom_affiche, salutation: n.salutation, mode: n.mode,
+                                         ambiance: n.ambiance)
+        guard await envoyer(reglable, action: "enregistrer-apparence") else { return false }
         withAnimation(EtatApp.animation(pour: n)) { apparence = n }
         message = "Apparence enregistrée."
         await chargerApparence(silencieux: true)
@@ -1160,4 +1296,12 @@ final class EtatApp: ObservableObject {
         }
         message = "Claude s'ouvre. La commande « \(commande) » est copiée : colle-la dans une session de l'onglet Code."
     }
+}
+
+/// Ce que `enregistrerApparence` envoie : les seuls champs réglables (le moteur fixe les autres).
+private struct ApparenceReglable: Encodable {
+    let nom_affiche: String
+    let salutation: String
+    let mode: String
+    let ambiance: String
 }

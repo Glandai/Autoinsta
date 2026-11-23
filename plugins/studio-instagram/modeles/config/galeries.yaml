@@ -14,14 +14,14 @@ series: []
 #     prenoms: "Léa & Hugo"             # ou null
 #     prenoms_publiables: false         # true seulement avec leur accord
 #   notes: >
-#     Contexte et anecdotes racontés par Gabriella : la seule matière autorisée pour un récit.
+#     Contexte et anecdotes racontés par toi : la seule matière autorisée pour un récit.
 #   prestataires:
 #     - {role: "Organisation", nom: "Nom de l'agence", compte: "compte_sans_arobase"}
 #     - {role: "Fleurs", nom: "Nom du fleuriste", compte: null}
 #   location_id: null                   # identifiant de lieu Facebook (facultatif)
 #   source:
 #     type: pictime                     # pictime | dossier
-#     url: "https://gabriellafeyerphoto.pic-time.com/client/xxxx/gallery?sectoken2=..."
+#     url: "https://tonstudio.pic-time.com/client/xxxx/gallery?sectoken2=..."
 #     # ou bien :
 #     # type: dossier
 #     # chemin: "~/Pictures/Exports/mas-exemple"

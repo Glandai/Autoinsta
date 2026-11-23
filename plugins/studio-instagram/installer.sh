@@ -15,9 +15,10 @@
 # le studio (app/) sont conservées.
 set -e
 PLUGIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SI_BESOIN=0; SANS_CF=0; SANS_APP=0; DOSSIER=""
+SI_BESOIN=0; SANS_CF=0; SANS_APP=0; DOSSIER=""; EMBARQUE=""
 for a in "$@"; do
   case "$a" in
+    --embarque=*) EMBARQUE="${a#--embarque=}" ;;   # lancé par l'app installée (.pkg) : son Python, pas de compilation
     --si-besoin) SI_BESOIN=1 ;;
     --sans-cloudflared) SANS_CF=1 ;;
     --sans-app) SANS_APP=1 ;;
@@ -95,15 +96,26 @@ fi
 
 # 4. Python (Pillow, requests, PyYAML, ffmpeg) dans .venv
 PY="$(command -v python3 || true)"
+if [ -n "$EMBARQUE" ]; then
+  PY="$EMBARQUE/Contents/Resources/python/bin/python3"     # Python livré dans l'app, avec ses paquets
+fi
 if [ -z "$PY" ]; then
   echo "Python 3 est introuvable. Lance d'abord : xcode-select --install"
   exit 1
 fi
 "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' || {
   echo "Python 3.9 ou plus récent est nécessaire."; exit 1; }
-[ -x "$DOSSIER/.venv/bin/python" ] || "$PY" -m venv "$DOSSIER/.venv"
-"$DOSSIER/.venv/bin/python" -m pip install --quiet --upgrade pip
-"$DOSSIER/.venv/bin/python" -m pip install --quiet -r "$DOSSIER/requirements.txt"
+if [ -n "$EMBARQUE" ]; then
+  # Le Python de l'app contient déjà Pillow, requests, PyYAML et ffmpeg : rien à télécharger.
+  if [ ! -x "$DOSSIER/.venv/bin/python" ] || ! "$DOSSIER/.venv/bin/python" -c 'import PIL, yaml' 2>/dev/null; then
+    rm -rf "$DOSSIER/.venv"
+    "$PY" -m venv --system-site-packages --without-pip "$DOSSIER/.venv"
+  fi
+else
+  [ -x "$DOSSIER/.venv/bin/python" ] || "$PY" -m venv "$DOSSIER/.venv"
+  "$DOSSIER/.venv/bin/python" -m pip install --quiet --upgrade pip
+  "$DOSSIER/.venv/bin/python" -m pip install --quiet -r "$DOSSIER/requirements.txt"
+fi
 
 # Règles d'autorisation de Claude dans le studio : celles du plugin s'ajoutent à celles de la
 # photographe (aucune n'est retirée).
@@ -156,10 +168,13 @@ if [ "$SANS_CF" = 0 ] && [ ! -x "$DOSSIER/outils/cloudflared" ]; then
 fi
 
 # 6. L'app Mac « Studio Instagram », construite ici à partir des sources du plugin
+if [ -n "$EMBARQUE" ] && [ -d "$EMBARQUE" ]; then
+  APP="$EMBARQUE"                                      # l'app est déjà installée : on l'enregistre seulement
+fi
 if [ "$SANS_APP" = 1 ]; then
   touch "$DOSSIER/.ui/sans-app"
-elif CONSTRUIRE="$DOSSIER/app/construire.sh" && { [ -f "$CONSTRUIRE" ] || CONSTRUIRE="$PLUGIN/app/construire.sh"; } && \
-     APP="$(bash "$CONSTRUIRE" "${STUDIO_APP_DIR:-$HOME/Applications}" | tail -1)" && [ -d "$APP" ]; then
+elif [ -n "$EMBARQUE" ] || { CONSTRUIRE="$DOSSIER/app/construire.sh"; { [ -f "$CONSTRUIRE" ] || CONSTRUIRE="$PLUGIN/app/construire.sh"; } && \
+     APP="$(bash "$CONSTRUIRE" "${STUDIO_APP_DIR:-$HOME/Applications}" | tail -1)" && [ -d "$APP" ]; }; then
   rm -f "$DOSSIER/.ui/sans-app"
   # Le studio sait où est l'app ; l'app sait quel dossier afficher.
   "$DOSSIER/.venv/bin/python" - "$APP" "$DOSSIER" <<'PY'

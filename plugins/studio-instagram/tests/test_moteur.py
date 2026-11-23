@@ -158,7 +158,8 @@ class TestMoteur(unittest.TestCase):
         self.assertEqual(r["etat"], "enregistre")
         a, _ = self.studio("app", "apparence")
         self.assertEqual(a["mode"], "sombre")
-        self.assertEqual(a["ecrans"], ["aujourdhui", "idees", "reglages"])
+        self.assertEqual(a["ecrans"], ["aujourdhui", "galeries", "statistiques", "reglages"])   # écrans essentiels fixes
+        self.assertFalse(a["points"])                                                          # trame toujours coupée
         self.studio("app", "retablir-apparence")
 
 

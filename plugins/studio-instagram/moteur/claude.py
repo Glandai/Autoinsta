@@ -31,6 +31,8 @@ TACHES = {
     "galerie": "Claude analyse la galerie",
     "bilan": "Claude fait le bilan de la semaine",
     "demande": "Claude s'occupe de ta demande",
+    "charte": "Claude adapte ta charte à ton activité",
+    "idees": "Claude cherche de nouvelles idées",
 }
 TACHES_DU_JOUR = ("matin", "creation", "retouche")
 CHEMINS_PATH = ("~/.local/bin", "~/.claude/local", "/opt/homebrew/bin", "/usr/local/bin",
@@ -455,6 +457,24 @@ def _prompt(e: dict) -> str:
                 "config/galeries.yaml : passe directement à l'indexation et à l'analyse visuelle.")
     if t == "bilan":
         return "/studio-instagram:studio-bilan"
+    if t == "idees":
+        return ("/studio-instagram:studio-matin\n\nJour : " + j + ". La photographe veut de NOUVELLES idées depuis "
+                "le bouton « + » de l'app : saute les étapes 1 et 2 (vérifications, statistiques), garde l'étape 3 "
+                "si une galerie attend son analyse, puis propose 3 idées vraiment différentes de celles déjà dans "
+                "jours/" + j + "/idees.json (s'il existe), écris-les à la place des anciennes et lance "
+                "« ./studio idees " + j + " ». " + (("Consigne de la photographe : « " + e["consigne"] + " ». ")
+                                                     if e.get("consigne") else "") + "Termine sans lancer la création.")
+    if t == "charte":
+        return ("Adapte la charte du studio (config/charte.md) au compte décrit dans config/compte.yaml : "
+                "activité (champ activite), nom, compte, localisation, voix, langue et approche. La charte d'origine "
+                "est écrite pour une photographe de mariage : réécris ce qui en dépend (rôle, identité, piliers "
+                "racontés, vocabulaire, exemples, interdits propres au mariage) pour cette activité, avec le même "
+                "niveau d'exigence. Garde intacts la structure numérotée, les règles de sécurité et de vérité "
+                "(rien d'inventé, aucune validation implicite, photos non modifiées), les codes de piliers "
+                "(EDITORIAL, DOCUMENTARY, DETAILS, PLACES, PORTRAITS, LOVE_STORY, ATMOSPHERE, ARTISTIC_VISION : "
+                "redéfinis seulement leur sens si besoin), les valeurs codées et les formats JSON du point 11, que "
+                "le moteur contrôle. N'invente aucun fait sur la personne : ce qui manque reste général. Écris le "
+                "résultat dans config/charte.md, puis vérifie avec « ./studio app charte ».")
     return (e["consigne"] + "\n\n(Demande écrite par la photographe dans le panneau « Demander à Claude » de "
             "l'app, le " + j + ". Si elle concerne l'apparence ou le fonctionnement de l'app, suis le skill "
             "studio-instagram:studio-app.)")
@@ -692,9 +712,11 @@ def _ecran_suivant(e: dict):
     statut = (config.lire_json(config.dossier_jour(j) / "etat.json", {}) or {}).get("statut")
     if t == "matin":
         return "idees" if statut == "idees_proposees" else "aujourdhui"
+    if t == "idees":
+        return "creation"
     if t in ("creation", "retouche"):
         return "creation" if statut == "brouillon_pret" else "aujourdhui"
-    return {"galerie": "galeries", "bilan": "statistiques"}.get(t)
+    return {"galerie": "galeries", "bilan": "statistiques", "charte": "charte"}.get(t)
 
 
 # --------------------------------------------------------------------------- exécution

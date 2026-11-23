@@ -296,9 +296,12 @@ struct PaletteRVB: Equatable {
         func choix(_ valeur: String, _ origine: String, _ ambiance: RVB) -> RVB {
             Apparence.simplifier(valeur) == Apparence.simplifier(origine) ? ambiance : RVB(hex: valeur, defaut: ambiance)
         }
-        let acc = choix(c.accent, d.accent, amb.accent)
-        let doux = choix(c.accent_doux, d.accent_doux, amb.accentDoux)
-        let f = sombre ? choix(c.fond_sombre, d.fond_sombre, amb.fond) : choix(c.fond_clair, d.fond_clair, amb.fond)
+        // L'apparence est fixée par le moteur (simplification du 22/11) : seules l'ambiance et le mode comptent ;
+        // les couleurs fines de config/app.yaml sont ignorées (`choix` reste pour un retour éventuel).
+        _ = choix
+        let acc = amb.accent
+        let doux = amb.accentDoux
+        let f = amb.fond
         let suc = RVB(hex: c.succes, defaut: RVB(hex: d.succes, defaut: .noir))
         let ale = RVB(hex: c.alerte, defaut: RVB(hex: d.alerte, defaut: .noir))
 
@@ -587,14 +590,15 @@ struct Jetons: Equatable {
         couleurs = Palette(apparence: a, schema: schema, systeme: systeme)
         mode = ModeApparence(a.mode)
         ambiance = Ambiance(a.ambiance)
-        police = PoliceTexte(a.police)
-        titres = StyleTitres(a.titres)
-        densite = Densite(a.densite)
-        niveauDemande = NiveauAnimations(a.animations)
-        niveau = systeme.reduireAnimations ? min(niveauDemande, .discretes) : niveauDemande
-        esp = Espacements(densite)
-        rayons = Rayons(arrondi: a.arrondi)
-        trameActive = lireOui(a.points) && !systeme.augmenterContraste
+        // Fixés (simplification du 22/11) : seuls `mode`, `ambiance`, `nom_affiche` et `salutation` se règlent.
+        police = .jakarta
+        titres = .police
+        densite = .confortable
+        niveauDemande = .normales
+        niveau = systeme.reduireAnimations ? .discretes : .normales
+        esp = Espacements(.confortable)
+        rayons = Rayons(arrondi: 14)
+        trameActive = false
     }
 
     static func defaut(_ schema: ColorScheme = .light) -> Jetons {
@@ -613,8 +617,8 @@ struct Jetons: Equatable {
     /// Le dégradé ne bouge pas : animations « aucune » ou « Réduire les animations ».
     var fondFige: Bool { niveau == .aucune || systeme.reduireAnimations }
 
-    /// Durée d'un tour complet de dérive des taches (secondes) : très lent.
-    var periodeDerive: Double { niveau == .riches ? 60 : 90 }
+    /// Durée d'un aller de dérive des taches (secondes) : très lent, animé par Core Animation (hors de l'app).
+    var periodeDerive: Double { 50 }
 
     /// Opacité des taches (moins fortes avec « Augmenter le contraste »).
     var opaciteTaches: Double {
@@ -622,11 +626,8 @@ struct Jetons: Equatable {
         return schema == .dark ? 0.78 : 0.92
     }
 
-    /// Opacité des points de la trame (0 sans trame).
-    var opaciteTrame: Double {
-        guard trameActive else { return 0 }
-        return schema == .dark ? 0.13 : 0.20
-    }
+    /// Compatibilité : la trame de points est retirée (toujours 0).
+    var opaciteTrame: Double { 0 }
 
     // MARK: Couleurs dérivées
 
@@ -647,7 +648,7 @@ struct Jetons: Equatable {
         return schema == .dark ? Color.white.opacity(0.07) : Color.white.opacity(0.80)
     }
 
-    var varianteSymboles: SymbolVariants { apparence.icones == "contours" ? .none : .fill }
+    var varianteSymboles: SymbolVariants { .fill }
 
     // MARK: Typographie
 
@@ -857,6 +858,28 @@ struct Jetons: Equatable {
             return .asymmetric(insertion: AnyTransition.offset(x: -48).combined(with: .opacity),
                                removal: AnyTransition.offset(x: 48).combined(with: .opacity))
         }
+    }
+}
+
+// MARK: - Activité de l'app
+
+/// L'app est-elle au premier plan ? Les animations permanentes (pulsations, filets, rotation, minuteurs, fond)
+/// s'arrêtent quand elle passe en arrière-plan : `@ObservedObject private var app = ActiviteApp.partage` puis `app.active`.
+@MainActor
+final class ActiviteApp: ObservableObject {
+    static let partage = ActiviteApp()
+    @Published private(set) var active = true
+    private var observateurs: [NSObjectProtocol] = []
+
+    private init() {
+        active = NSApp?.isActive ?? true
+        let centre = NotificationCenter.default
+        observateurs.append(centre.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.active = true }
+        })
+        observateurs.append(centre.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.active = false }
+        })
     }
 }
 

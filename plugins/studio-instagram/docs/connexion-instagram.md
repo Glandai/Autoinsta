@@ -14,7 +14,7 @@ Tu fais toi-même ces étapes dans ton navigateur. Claude peut te guider, mais n
 | Musique Instagram ajoutée automatiquement aux Reels | **oui** (API Audio) | non |
 | Renouvellement du jeton | tous les 60 jours (5 minutes), ou jamais avec un utilisateur système | automatique |
 
-Le compte @gabriellafeyer.photo a déjà une Page Facebook (facebook.com/gabriellafeyerphoto) : la route A est la bonne.
+Si ton compte a déjà une Page Facebook, la route A est la bonne.
 
 ## Route A : Facebook
 

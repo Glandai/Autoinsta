@@ -306,6 +306,7 @@ def reglages() -> dict:
     fonds = {"clair": "#f6f2ec", "sombre": "#141412", "papier": "#efe6da", **(mep.get("fonds") or {})}
     return {
         "nom": c.get("nom") or "", "compte_instagram": c.get("compte_instagram") or "",
+        "activite": str(c.get("activite") or "photographe de mariage"),
         "localisation": c.get("localisation") or "", "voix": c.get("voix") or "", "langue": c.get("langue") or "",
         "fuseau": c.get("fuseau") or "Europe/Paris", "approche": (c.get("approche") or "").rstrip(),
         "exemples_de_legendes": [str(x) for x in (c.get("exemples_de_legendes") or [])],
@@ -378,7 +379,7 @@ def enregistrer_reglages(fichier: str) -> dict:
     if erreurs:
         return {"etat": "refuse", "erreurs": erreurs}
     c = config.compte()
-    for cle in ("nom", "compte_instagram", "localisation", "voix", "langue", "fuseau", "approche",
+    for cle in ("nom", "compte_instagram", "activite", "localisation", "voix", "langue", "fuseau", "approche",
                 "exemples_de_legendes", "comptes_autorises", "images_deja_publiees"):
         if cle in n:
             c[cle] = n[cle]
@@ -418,7 +419,7 @@ APPARENCE_DEFAUT = {
     "ambiance": "provence",
     "police": "jakarta",
     "titres": "police",
-    "points": True,
+    "points": False,
     "densite": "confortable",
     "arrondi": 14,
     "animations": "normales",
@@ -431,6 +432,10 @@ CHOIX_APPARENCE = {"mode": ("auto", "clair", "sombre"), "titres": ("police", "se
                    "densite": ("compacte", "confortable", "aeree"),
                    "animations": ("aucune", "discretes", "normales", "riches"), "icones": ("pleines", "contours")}
 ECRANS_FIXES = ("aujourdhui", "reglages")
+APPARENCE_REGLABLE = ("nom_affiche", "salutation", "mode", "ambiance")
+APPARENCE_FIXE = ("police", "titres", "points", "densite", "arrondi", "animations", "icones")
+# Barre d'icônes : l'essentiel. Idées et aperçu passent par « + » et l'accueil ; charte et règles par les Réglages.
+ECRANS_ESSENTIELS = ("aujourdhui", "galeries", "statistiques", "reglages")
 ENTETE_APPARENCE = ("# Apparence de l'app Studio Instagram. Modifiable dans l'app (Réglages › Apparence)\n"
                     "# ou en le demandant à Claude. L'app se met à jour dès que ce fichier change.")
 
@@ -468,6 +473,11 @@ def apparence() -> dict:
     for cle, choix in CHOIX_APPARENCE.items():
         res[cle] = a.get(cle) if a.get(cle) in choix else d[cle]
     res["points"] = bool(a.get("points", d["points"])) if isinstance(a.get("points", d["points"]), bool) else d["points"]
+    # Seuls le mode, l'ambiance, le nom du studio et la salutation se règlent : le reste est fixé pour garder
+    # une app simple et rapide (pas de trame de points, police et formes d'origine, écrans essentiels).
+    res.update({k: APPARENCE_DEFAUT[k] for k in APPARENCE_FIXE})
+    res["couleurs"] = dict(APPARENCE_DEFAUT["couleurs"])
+    res["ecrans"] = list(ECRANS_ESSENTIELS)
     return res
 
 
@@ -507,15 +517,13 @@ def enregistrer_apparence(fichier: str) -> dict:
     if erreurs:
         return {"etat": "refuse", "erreurs": erreurs}
     actuelle = apparence()
-    fusion = {**actuelle, **{k: v for k, v in n.items() if k in APPARENCE_DEFAUT},
-              "couleurs": {**actuelle["couleurs"], **(n.get("couleurs") or {})}}
-    fusion["ecrans"] = _ecrans(fusion.get("ecrans"))
-    _ecrire_yaml("config/app.yaml", fusion, ENTETE_APPARENCE)
+    fusion = {**actuelle, **{k: v for k, v in n.items() if k in APPARENCE_REGLABLE}}
+    _ecrire_yaml("config/app.yaml", {k: fusion[k] for k in APPARENCE_REGLABLE}, ENTETE_APPARENCE)
     return {"etat": "enregistre", "erreurs": []}
 
 
 def retablir_apparence() -> dict:
-    _ecrire_yaml("config/app.yaml", APPARENCE_DEFAUT, ENTETE_APPARENCE)
+    _ecrire_yaml("config/app.yaml", {k: APPARENCE_DEFAUT[k] for k in APPARENCE_REGLABLE}, ENTETE_APPARENCE)
     return {"etat": "retablie"}
 
 

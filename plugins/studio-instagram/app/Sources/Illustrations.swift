@@ -10,8 +10,11 @@ import SwiftUI
 //
 // Couleurs : dérivées de l'ambiance courante (`\.jetons` : taches du dégradé et accent), rendues plus vives pour
 // le dessin, avec toujours une teinte de contraste ; l'encre est celle du thème (sombre en clair, claire en sombre).
-// Mouvement : le tracé se dessine à l'apparition, puis la scène flotte doucement (ballons, étincelles, notes…).
-// Rien ne bouge si « Réduire les animations » est actif (`j.deplacements` ou le réglage du système).
+// Mouvement : le tracé se dessine une fois à l'apparition (~1,8 s), puis la scène est figée en calques pixellisés
+// (`drawingGroup`) : seuls quelques petits éléments flottent, par des animations GPU (décalage, rotation, échelle en
+// `repeatForever`) ; aucun Canvas n'est redessiné au repos. Tout s'arrête quand la vue disparaît ou que l'app passe
+// en arrière-plan ou est masquée. Rien ne bouge si « Réduire les animations » est actif (`j.deplacements` ou le
+// réglage du système).
 // Décoratif : masqué pour VoiceOver (le titre de l'écran porte le sens).
 
 // MARK: - API
@@ -28,6 +31,9 @@ struct Illustration: View {
 
     @Environment(\.jetons) private var j
     @Local private var debut: Date? = nil
+    @Local private var enTrace = false
+    @Local private var surEcran = false
+    @Local private var appVisible = Illustration.auPremierPlan()
 
     init(_ sujet: SujetIllustration, taille: CGFloat = 280) {
         self.sujet = sujet
@@ -38,56 +44,177 @@ struct Illustration: View {
         j.deplacements && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
+    /// L'app est active et au moins une de ses fenêtres est visible.
+    private static func auPremierPlan() -> Bool {
+        guard let app = NSApp else { return true }
+        return app.isActive && app.occlusionState.contains(.visible)
+    }
+
     var body: some View {
-        let palette = PaletteIllustration(j)
+        let pal = PaletteIllustration(j)
         let anime = animee
-        return Group {
-            if anime {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { contexte in
-                    toile(palette, date: contexte.date)
+        let mobiles = Scenes.mobiles(sujet)
+        let bouge = anime && !enTrace && surEcran && appVisible
+        let centre = NotificationCenter.default
+        return ZStack {
+            if !anime {
+                CalqueIllustration(sujet: sujet, taille: taille, pal: pal, cible: .tout, trace: 1)
+                    .equatable()
+                    .drawingGroup()
+            } else if enTrace, let debut {
+                // Seul moment où le dessin est recalculé à chaque image : le tracé d'apparition.
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !appVisible)) { contexte in
+                    CalqueIllustration(sujet: sujet, taille: taille, pal: pal, cible: .tout,
+                                       trace: min(1, max(0, contexte.date.timeIntervalSince(debut) / Illustration.dureeTrace)))
                 }
             } else {
-                toile(palette, date: nil)
+                ForEach(0...mobiles.count, id: \.self) { k in
+                    CalqueIllustration(sujet: sujet, taille: taille, pal: pal, cible: .statique(k), trace: 1)
+                        .equatable()
+                        .drawingGroup()
+                    if k < mobiles.count {
+                        CalqueIllustration(sujet: sujet, taille: taille, pal: pal, cible: .mobile(k), trace: 1)
+                            .equatable()
+                            .drawingGroup()
+                            .modifier(Flotte(f: mobiles[k], u: taille / 100, actif: bouge))
+                    }
+                }
             }
         }
         .frame(width: taille, height: taille)
-        .onAppear { if anime { debut = Date() } }
-        .onChange(of: sujet) { _, _ in if animee { debut = Date() } }
+        .onAppear { surEcran = true; appVisible = Illustration.auPremierPlan() }
+        .onDisappear { surEcran = false }
+        .task(id: sujet) { await tracer() }
+        .onReceive(centre.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            appVisible = Illustration.auPremierPlan()
+        }
+        .onReceive(centre.publisher(for: NSApplication.didResignActiveNotification)) { _ in appVisible = false }
+        .onReceive(centre.publisher(for: NSApplication.didChangeOcclusionStateNotification)) { _ in
+            appVisible = Illustration.auPremierPlan()
+        }
         .accessibilityHidden(true)
     }
 
-    private func toile(_ pal: PaletteIllustration, date: Date?) -> some View {
-        let sujet = self.sujet
-        let taille = self.taille
-        let debut = self.debut
+    private static let dureeTrace = 1.7
+
+    /// Tracé d'apparition, une fois par apparition (ou changement de sujet), puis calques figés.
+    @MainActor private func tracer() async {
+        guard animee else {
+            enTrace = false
+            return
+        }
+        debut = Date()
+        enTrace = true
+        try? await Task.sleep(nanoseconds: UInt64((Illustration.dureeTrace + 0.1) * 1_000_000_000))
+        if Task.isCancelled { return }
+        enTrace = false
+    }
+}
+
+/// Un calque de la scène, dessiné une seule fois (ne se redessine que si ses entrées changent).
+private struct CalqueIllustration: View, Equatable {
+    let sujet: SujetIllustration
+    let taille: CGFloat
+    let pal: PaletteIllustration
+    let cible: Calques.Cible
+    let trace: Double
+
+    var body: some View {
+        let sujet = self.sujet, taille = self.taille, pal = self.pal, cible = self.cible, trace = self.trace
         return Canvas { ctx, dim in
             let u = min(dim.width, dim.height) / 100
             var c = ctx
             c.translateBy(x: (dim.width - 100 * u) / 2, y: (dim.height - 100 * u) / 2)
             c.scaleBy(x: u, y: u)
-            var t = 0.0
-            var trace = 1.0
-            if let date {
-                t = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3600)
-                if let debut { trace = min(1, max(0, date.timeIntervalSince(debut) / 1.7)) }
-            }
             let epaisseur = (1.2 + taille * 0.0078) / u
-            let p = Pinceau(ctx: c, pal: pal, w: epaisseur, grainR: max(0.28, 0.5 / u), trace: trace, t: t)
+            let p = Pinceau(ctx: c, pal: pal, w: epaisseur, grainR: max(0.28, 0.5 / u), trace: trace,
+                            calques: Calques(cible))
             Scenes.dessiner(sujet, p)
         }
+        .frame(width: taille, height: taille)
+    }
+}
+
+/// Mouvement d'un élément (unités de la scène 100 × 100), joué par le GPU.
+private struct Flottement {
+    var dx: CGFloat = 0
+    var dy: CGFloat = 0
+    var angle: Double = 0
+    var echelle: CGFloat = 0
+    var ancre = CGPoint(x: 50, y: 50)
+    var duree: Double = 2
+    var delai: Double = 0
+    /// Boucle linéaire sans retour (grains de sable qui tombent).
+    var boucle = false
+}
+
+private struct Flotte: ViewModifier {
+    let f: Flottement
+    let u: CGFloat
+    let actif: Bool
+    @Local private var phase = false
+
+    func body(content: Content) -> some View {
+        let a = UnitPoint(x: f.ancre.x / 100, y: f.ancre.y / 100)
+        return content
+            .scaleEffect(phase ? 1 + f.echelle : 1, anchor: a)
+            .rotationEffect(.degrees(phase ? f.angle : 0), anchor: a)
+            .offset(x: phase ? f.dx * u : 0, y: phase ? f.dy * u : 0)
+            .onAppear { regler(actif) }
+            .onChange(of: actif) { _, v in regler(v) }
+    }
+
+    private func regler(_ v: Bool) {
+        if v {
+            let base: Animation = f.boucle ? .linear(duration: f.duree) : .easeInOut(duration: f.duree)
+            withAnimation(base.repeatForever(autoreverses: !f.boucle).delay(f.delai)) { phase = true }
+        } else {
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { phase = false }
+        }
+    }
+}
+
+/// Répartition des appels de dessin en calques : statiques entre les éléments mobiles, dans l'ordre de la scène.
+private final class Calques {
+    enum Cible: Equatable { case tout, statique(Int), mobile(Int) }
+
+    let cible: Cible
+    private var segment = 0
+    private var mobileCourant: Int?
+
+    init(_ cible: Cible) { self.cible = cible }
+
+    var actif: Bool {
+        switch cible {
+        case .tout: return true
+        case .statique(let k): return mobileCourant == nil && segment == k
+        case .mobile(let i): return mobileCourant == i
+        }
+    }
+
+    func entrer(_ i: Int) {
+        mobileCourant = i
+        segment = i
+    }
+
+    func sortir() {
+        if let m = mobileCourant { segment = m + 1 }
+        mobileCourant = nil
     }
 }
 
 // MARK: - Couleurs
 
-struct Teinte {
+struct Teinte: Equatable {
     let base: Color
     let clair: Color
     let fonce: Color
 }
 
 /// Couleurs du dessin, tirées de l'ambiance courante (taches du dégradé et accent) et poussées vers des tons vifs.
-struct PaletteIllustration {
+struct PaletteIllustration: Equatable {
     let sombre: Bool
     let encre: Color
     let papier: Color
@@ -441,8 +568,17 @@ private struct Pinceau {
     let grainR: CGFloat
     /// Avancement du tracé d'apparition (0 → 1).
     let trace: Double
-    /// Temps (s) pour le flottement ; 0 sans animation.
-    let t: Double
+    /// Calque en cours de dessin : les appels hors de ce calque ne dessinent rien.
+    let calques: Calques
+
+    /// La suite appartient à l'élément mobile `i` (indices croissants, voir `Scenes.mobiles`).
+    func mobile(_ i: Int) -> Pinceau {
+        calques.entrer(i)
+        return self
+    }
+
+    /// Fin de l'élément mobile : la suite est statique.
+    func fixe() { calques.sortir() }
 
     // Transformations
     func decale(_ dx: CGFloat, _ dy: CGFloat) -> Pinceau {
@@ -479,11 +615,6 @@ private struct Pinceau {
         return p
     }
 
-    /// Flottement (sinus) ; 0 sans animation.
-    func onde(_ vitesse: Double, _ phase: Double = 0) -> CGFloat {
-        t == 0 ? 0 : CGFloat(sin(t * vitesse + phase))
-    }
-
     func avancement(_ debut: Double, _ duree: Double) -> Double {
         if trace >= 1 { return 1 }
         return min(1, max(0, (trace - debut) / duree))
@@ -503,6 +634,7 @@ private struct Pinceau {
     /// Trait d'encre vivant : épaisseur qui varie, bouts un peu plus fins, tracé progressif.
     func trait(_ brut: [CGPoint], largeur: CGFloat = 1, debut: Double = 0.3, duree: Double = 0.3,
                tremble: CGFloat = 0.28, graine: Int = 0, couleur: Color? = nil) {
+        guard calques.actif else { return }
         let a = avancement(debut, duree)
         guard a > 0, brut.count > 1 else { return }
         var pts = reechantillonner(brut, pas: 0.6)
@@ -561,6 +693,7 @@ private struct Pinceau {
     /// Bloc coloré texturé : fond, motif, grain. Apparaît par un petit rebond.
     func forme(_ contour: [CGPoint], _ teinte: Teinte, motif: Motif, trame: Color? = nil, debut: Double = 0,
                graine: Int, contourEncre: Bool = false) {
+        guard calques.actif else { return }
         let r = bornes(contour)
         guard let p0 = apparition(debut, autour: CGPoint(x: r.midX, y: r.midY)) else { return }
         let fond = chemin(contour, ferme: true)
@@ -573,6 +706,7 @@ private struct Pinceau {
 
     /// Aplat simple (sans motif).
     func plein(_ contour: [CGPoint], _ couleur: Color, debut: Double = 0) {
+        guard calques.actif else { return }
         let r = bornes(contour)
         guard let p = apparition(debut, autour: CGPoint(x: r.midX, y: r.midY)) else { return }
         p.ctx.fill(chemin(contour, ferme: true), with: .color(couleur))
@@ -580,6 +714,7 @@ private struct Pinceau {
 
     /// Papier moucheté d'encre, plus dense d'un côté (ombre de pulvérisation).
     func papier(_ contour: [CGPoint], debut: Double = 0.15, graine: Int, cote: CGFloat = 1, densite: Double = 1) {
+        guard calques.actif else { return }
         let r = bornes(contour)
         guard let p0 = apparition(debut, autour: CGPoint(x: r.midX, y: r.midY)) else { return }
         p0.ctx.fill(chemin(contour, ferme: true), with: .color(pal.papier))
@@ -770,9 +905,8 @@ private struct Pinceau {
     }
 
     /// Étoile pleine scintillante, contour à l'encre.
-    func etincelle(_ c: CGPoint, _ r: CGFloat, _ teinte: Teinte, phase: Double = 0, debut: Double = 0.5, graine: Int = 0) {
-        let s = 1 + 0.12 * onde(3.1, phase)
-        let p = echelle(s, autour: c).tourne(Double(onde(1.3, phase)) * 8, autour: c)
+    func etincelle(_ c: CGPoint, _ r: CGFloat, _ teinte: Teinte, debut: Double = 0.5, graine: Int = 0) {
+        let p = self
         p.forme(etoile(c, r), teinte, motif: .uni, debut: debut, graine: graine)
         p.contour(etoile(c, r), largeur: 0.9, debut: debut + 0.08, duree: 0.2, graine: graine)
     }
@@ -781,8 +915,54 @@ private struct Pinceau {
 // MARK: - Scènes
 
 private enum Scenes {
-    static func dessiner(_ sujet: SujetIllustration, _ p0: Pinceau) {
-        let p = p0.decale(0, p0.onde(0.9) * 0.8)
+    /// Éléments mobiles de chaque scène, dans l'ordre des `p.mobile(i)` de son dessin.
+    static func mobiles(_ sujet: SujetIllustration) -> [Flottement] {
+        switch sujet {
+        case .bienvenue:
+            return [Flottement(dy: -1.8, angle: 3, ancre: pt(30, 72), duree: 2.4),
+                    Flottement(dy: -1.8, angle: -3, ancre: pt(68, 72), duree: 2.7, delai: 0.5),
+                    Flottement(angle: 6, ancre: pt(50, 76), duree: 1.0)]
+        case .claude:
+            return [Flottement(dy: -1.4, duree: 2.6),
+                    Flottement(echelle: 0.2, ancre: pt(87, 17), duree: 1.2),
+                    Flottement(echelle: 0.2, ancre: pt(14, 26), duree: 1.4, delai: 0.4)]
+        case .instagram:
+            return [Flottement(dy: -1.6, echelle: 0.07, ancre: pt(76, 23), duree: 1.6),
+                    Flottement(dy: -1.4, duree: 2.2, delai: 0.3)]
+        case .rythme:
+            return [Flottement(dy: -1.6, duree: 3)]
+        case .pret:
+            return [Flottement(angle: 2.2, ancre: pt(6, 15), duree: 1.9),
+                    Flottement(angle: -2.2, ancre: pt(96, 16), duree: 2.1, delai: 0.3),
+                    Flottement(angle: 3, ancre: pt(50, 88), duree: 1.1)]
+        case .idee:
+            return [Flottement(echelle: 0.05, ancre: pt(50, 38), duree: 2),
+                    Flottement(angle: 3, ancre: pt(50, 70), duree: 2.4)]
+        case .photos:
+            return [Flottement(dy: -1.2, angle: 1.5, ancre: pt(50, 54), duree: 2.6),
+                    Flottement(angle: 8, echelle: 0.15, ancre: pt(80, 22), duree: 1.6)]
+        case .legende:
+            return [Flottement(dx: 1.4, dy: 0.6, duree: 0.8)]
+        case .musique:
+            return [Flottement(dy: -2.2, angle: 6, ancre: pt(30, 42), duree: 1.8),
+                    Flottement(dy: -2.4, angle: -5, ancre: pt(60, 30), duree: 2, delai: 0.4),
+                    Flottement(dx: 1.2, dy: -2, angle: 8, ancre: pt(84, 22), duree: 1.6, delai: 0.8)]
+        case .apercu:
+            return [Flottement(dy: -1.4, angle: 2, ancre: pt(52, 80), duree: 2.6)]
+        case .publication:
+            return [Flottement(echelle: 0.05, ancre: pt(84, 56), duree: 2.2),
+                    Flottement(dx: 1.6, dy: -2.2, angle: 4, ancre: pt(66, 36), duree: 2)]
+        case .attente:
+            return [Flottement(dy: 3.2, duree: 0.36, boucle: true),
+                    Flottement(angle: 8, echelle: 0.15, ancre: pt(20, 30), duree: 1.5),
+                    Flottement(angle: 8, echelle: 0.15, ancre: pt(82, 16), duree: 1.3, delai: 0.5)]
+        case .erreur:
+            return [Flottement(angle: 5, ancre: pt(42, 56), duree: 3),
+                    Flottement(dy: -1.6, duree: 2.2, delai: 0.4)]
+        }
+    }
+
+    static func dessiner(_ sujet: SujetIllustration, _ p: Pinceau) {
         switch sujet {
         case .bienvenue: bienvenue(p)
         case .claude: claude(p)
@@ -854,16 +1034,17 @@ private enum Scenes {
 
     static func bienvenue(_ p: Pinceau) {
         let pal = p.pal
-        let b1 = p.decale(0, p.onde(1.3) * 1.8).tourne(Double(p.onde(1.05, 0.4)) * 3, autour: pt(30, 72))
+        let b1 = p.mobile(0)
         ballon(b1, centre: pt(23, 33), rx: 8, ry: 10, rot: -12, bout: pt(33, 74), teinte: nil, graine: 11, debut: 0.25)
-        let b2 = p.decale(0, p.onde(1.2, 1.7) * 1.8).tourne(Double(p.onde(1.0, 2.2)) * 3, autour: pt(68, 72))
+        let b2 = p.mobile(1)
         ballon(b2, centre: pt(78, 36), rx: 7.5, ry: 9.5, rot: 10, bout: pt(67, 74), teinte: pal.miel, graine: 12,
                debut: 0.32)
 
-        let m = p.tourne(Double(p.onde(2.4)) * 6, autour: pt(50, 76))
+        let m = p.mobile(2)
         mainQuiSalue(m, debut: 0.12)
         m.mouvement(pt(48, 32), 19, de: 196, a: 226, debut: 0.72)
         m.mouvement(pt(52, 32), 19, de: -46, a: -16, debut: 0.76)
+        p.fixe()
 
         p.forme(caillou(pt(66, 70), 34, 22, rot: 9, graine: 3), pal.chaud, motif: .quadrillage, debut: 0.0, graine: 3)
         p.forme(caillou(pt(33, 79), 46, 26, rot: -5, graine: 4), pal.braise, motif: .confettis, trame: pal.peche.clair,
@@ -887,7 +1068,7 @@ private enum Scenes {
         p.forme(caillou(pt(83, 66), 15, 12, rot: 0, graine: 33), pal.miel, motif: .vagues, trame: pal.miel.fonce,
                 debut: 0.1, graine: 33)
 
-        let bulle = p.decale(0, p.onde(1.1) * 1.4)
+        let bulle = p.mobile(0)
         let n = nuage(pt(55, 35), 25, 17, bosses: 9)
         bulle.papier(n, debut: 0.12, graine: 34, cote: 1, densite: 0.7)
         bulle.contour(n, debut: 0.16, duree: 0.4, graine: 34)
@@ -896,14 +1077,15 @@ private enum Scenes {
             bulle.papier(o, debut: 0.3 + Double(i) * 0.05, graine: 35 &+ i)
             bulle.contour(o, largeur: 0.9, debut: 0.32 + Double(i) * 0.05, duree: 0.08, graine: 35 &+ i)
         }
-        bulle.etincelle(pt(54, 35), 11, pal.chaud, phase: 0, debut: 0.42, graine: 36)
-        bulle.etincelle(pt(68, 26), 4.6, pal.braise, phase: 1.4, debut: 0.52, graine: 37)
-        bulle.etincelle(pt(41, 26), 3.4, pal.miel, phase: 2.6, debut: 0.56, graine: 38)
+        bulle.etincelle(pt(54, 35), 11, pal.chaud, debut: 0.42, graine: 36)
+        bulle.etincelle(pt(68, 26), 4.6, pal.braise, debut: 0.52, graine: 37)
+        bulle.etincelle(pt(41, 26), 3.4, pal.miel, debut: 0.56, graine: 38)
 
-        let e1 = p.echelle(1 + 0.15 * p.onde(2.6, 0.5), autour: pt(87, 17))
+        let e1 = p.mobile(1)
         e1.eclat(pt(87, 17), 4, debut: 0.8, graine: 39)
-        let e2 = p.echelle(1 + 0.15 * p.onde(2.2, 2.0), autour: pt(14, 26))
+        let e2 = p.mobile(2)
         e2.eclat(pt(14, 26), 3.2, debut: 0.84, graine: 40)
+        p.fixe()
         p.croix(pt(88, 45), 1.6, debut: 0.86, graine: 41)
         p.rond(pt(12, 46), 1.4, debut: 0.9, graine: 42)
         p.zigzag(pt(16, 10), pt(24, 8), dents: 3, amp: 1.1, debut: 0.92, graine: 43)
@@ -917,7 +1099,7 @@ private enum Scenes {
         p.forme(caillou(pt(18, 54), 13, 11, rot: 0, graine: 53), pal.braise, motif: .vagues, debut: 0.08, graine: 53)
 
         let c = pt(48, 48)
-        let tel = p.tourne(-8 + Double(p.onde(1.0)) * 1.5, autour: c)
+        let tel = p.tourne(-8, autour: c)
         let coque = rectArrondi(c, 32, 56, r: 6)
         tel.papier(coque, debut: 0.12, graine: 54, cote: -1, densite: 0.6)
         tel.contour(coque, debut: 0.15, duree: 0.4, graine: 54)
@@ -936,13 +1118,14 @@ private enum Scenes {
         tel.trait([pt(38, 64), pt(49, 64)], largeur: 0.6, debut: 0.68, duree: 0.06, graine: 64)
 
         let hc = pt(76, 23)
-        let h = p.decale(0, p.onde(1.4, 0.8) * 1.6).echelle(1 + 0.07 * max(0, p.onde(4.2)), autour: hc)
+        let h = p.mobile(0)
         h.forme(coeur(hc, 10, rot: 12), pal.braise, motif: .points, trame: pal.braise.clair, debut: 0.45, graine: 65)
         h.contour(coeur(hc, 10, rot: 12), debut: 0.5, duree: 0.2, graine: 65)
         h.mouvement(hc, 15, de: -150, a: -115, debut: 0.8)
-        let petit = p.decale(0, p.onde(1.7, 2.1) * 1.4)
+        let petit = p.mobile(1)
         petit.contour(coeur(pt(89, 41), 3.6, rot: 18), largeur: 0.8, debut: 0.84, duree: 0.08, graine: 66)
         petit.contour(coeur(pt(22, 22), 3, rot: -14), largeur: 0.8, debut: 0.88, duree: 0.08, graine: 67)
+        p.fixe()
         p.croix(pt(14, 38), 1.6, debut: 0.9, graine: 68)
         p.rond(pt(88, 8), 1.5, debut: 0.92, graine: 69)
     }
@@ -950,7 +1133,7 @@ private enum Scenes {
     static func rythme(_ p: Pinceau) {
         let pal = p.pal
         let sc = pt(73, 37)
-        let soleil = p.decale(0, -p.onde(0.7) * 1.6)
+        let soleil = p.mobile(0)
         soleil.forme(ovale(sc, 14, 14), pal.miel, motif: .points, trame: pal.chaud.base, debut: 0, graine: 71)
         for i in 0..<9 {
             let a = -160.0 + Double(i) * 22
@@ -960,6 +1143,7 @@ private enum Scenes {
                           pt(sc.x + r1 * CGFloat(cos(ra)), sc.y + r1 * CGFloat(sin(ra)))],
                          largeur: 0.85, debut: 0.6 + Double(i) * 0.025, duree: 0.06, tremble: 0.1, graine: 72 &+ i)
         }
+        p.fixe()
         p.forme(caillou(pt(52, 82), 76, 22, rot: -2, graine: 73), pal.sauge, motif: .vagues, debut: 0.04, graine: 73)
         p.forme(caillou(pt(16, 72), 16, 13, rot: 0, graine: 74), pal.peche, motif: .points, trame: pal.braise.base,
                 debut: 0.08, graine: 74)
@@ -1003,12 +1187,12 @@ private enum Scenes {
     static func pret(_ p: Pinceau) {
         let pal = p.pal
         // fanions
-        let gauche = p.tourne(Double(p.onde(1.6)) * 2.2, autour: pt(6, 15))
+        let gauche = p.mobile(0)
         fanions(gauche, de: pt(4, 15), a: pt(40, 7), creux: 6, n: 4, debut: 0.3, graine: 110)
-        let droite = p.tourne(Double(p.onde(1.5, 1.3)) * 2.2, autour: pt(96, 16))
+        let droite = p.mobile(1)
         fanions(droite, de: pt(60, 7), a: pt(96, 16), creux: 6, n: 4, debut: 0.4, graine: 120)
 
-        let pouce = p.tourne(10 + Double(p.onde(1.8)) * 3, autour: pt(50, 88)).decale(0, -7)
+        let pouce = p.mobile(2).tourne(10, autour: pt(50, 88)).decale(0, -7)
         let ctrl: [CGPoint] = [
             pt(43, 100), pt(43.5, 80), pt(43, 72), pt(38, 70), pt(34.5, 65), pt(34, 58), pt(35, 51.5),
             pt(38.5, 47.5), pt(43, 46.5), pt(43.2, 40), pt(43.8, 34), pt(46, 30.5), pt(49.5, 30),
@@ -1026,6 +1210,7 @@ private enum Scenes {
                     duree: 0.05, graine: 135)
         pouce.mouvement(pt(48.5, 31), 10, de: -40, a: -8, debut: 0.8)
         pouce.mouvement(pt(48.5, 31), 10, de: 188, a: 220, debut: 0.82)
+        p.fixe()
 
         p.forme(caillou(pt(31, 79), 40, 28, rot: -9, graine: 136), pal.braise, motif: .gribouillis,
                 trame: pal.chaud.base, debut: 0, graine: 136)
@@ -1068,14 +1253,15 @@ private enum Scenes {
 
     static func idee(_ p: Pinceau) {
         let pal = p.pal
-        let lueur = p.echelle(1 + 0.04 * p.onde(2.0), autour: pt(50, 38)).opacite(0.9 + 0.1 * Double(p.onde(2.0)))
+        let lueur = p.mobile(0)
         lueur.forme(caillou(pt(50, 37), 50, 46, rot: 8, graine: 151), pal.miel, motif: .points, trame: pal.peche.clair,
                     debut: 0, graine: 151)
+        p.fixe()
         p.forme(caillou(pt(28, 82), 40, 22, rot: -6, graine: 152), pal.sauge, motif: .vagues, debut: 0.04, graine: 152)
         p.forme(caillou(pt(70, 84), 34, 20, rot: 7, graine: 153), pal.braise, motif: .confettis,
                 trame: pal.peche.clair, debut: 0.08, graine: 153)
 
-        let b = p.tourne(Double(p.onde(1.2)) * 3, autour: pt(50, 70))
+        let b = p.mobile(1)
         let verre = lisser([pt(43.5, 58), pt(42, 51), pt(36, 44), pt(34, 34), pt(38, 24), pt(46, 18.5), pt(54, 18.5),
                             pt(62, 24), pt(66, 34), pt(64, 44), pt(58, 51), pt(56.5, 58)], pas: 8)
         b.papier(verre + [pt(43.5, 58)], debut: 0.12, graine: 154, cote: 1, densite: 0.6)
@@ -1091,12 +1277,12 @@ private enum Scenes {
                                pt(56, 40), pt(53.5, 46), pt(54, 57)], pas: 8)
         b.trait(filament, largeur: 0.75, debut: 0.52, duree: 0.2, graine: 159)
         b.trait(arcDe(pt(50, 35), 11, de: 200, a: 240), largeur: 0.8, debut: 0.7, duree: 0.06, graine: 160)
+        p.fixe()
 
         for i in 0..<7 {
             let a = -180.0 + Double(i) * 30
             let ra = rad(a)
-            let vibre = CGFloat(i % 2 == 0 ? 1 : -1) * p.onde(5, Double(i)) * 0.8
-            let r0: CGFloat = 22, r1: CGFloat = 27.5 + vibre
+            let r0: CGFloat = 22, r1: CGFloat = 27.5
             let c = pt(50, 36)
             p.trait([pt(c.x + r0 * CGFloat(cos(ra)), c.y + r0 * CGFloat(sin(ra))),
                      pt(c.x + r1 * CGFloat(cos(ra)), c.y + r1 * CGFloat(sin(ra)))],
@@ -1128,7 +1314,7 @@ private enum Scenes {
         _ = polaroid(p, centre: pt(61, 46), rot: 11, teinte: pal.braise, motif: .gribouillis, trame: pal.chaud.base,
                      debut: 0.18, graine: 186)
         let c = pt(50, 54)
-        let dessus = p.decale(0, p.onde(1.2) * 1.2).tourne(-2 + Double(p.onde(0.9, 1)) * 1.5, autour: c)
+        let dessus = p.mobile(0).tourne(-2, autour: c)
         let q = polaroid(dessus, centre: c, rot: 0, teinte: pal.ciel, motif: .uni, trame: nil, debut: 0.26,
                          graine: 189)
         let image = rectArrondi(pt(50, 50), 28, 26, r: 0.8)
@@ -1141,7 +1327,8 @@ private enum Scenes {
         q.trait(boucles(pt(40, 70.5), longueur: 14, avance: 2.6, hauteur: 2.2, graine: 3), largeur: 0.6, debut: 0.6,
                 duree: 0.15, graine: 195)
 
-        p.etincelle(pt(80, 22), 5, pal.miel, phase: 0.5, debut: 0.8, graine: 196)
+        p.mobile(1).etincelle(pt(80, 22), 5, pal.miel, debut: 0.8, graine: 196)
+        p.fixe()
         p.eclat(pt(18, 22), 3.4, debut: 0.84, graine: 197)
         p.croix(pt(88, 46), 1.5, debut: 0.88, graine: 198)
         p.rond(pt(12, 40), 1.4, debut: 0.9, graine: 199)
@@ -1170,7 +1357,7 @@ private enum Scenes {
                 debut: 0.76, duree: 0.1, tremble: 0.15, graine: 212)
 
         // stylo
-        let s = p.decale(p.onde(1.8) * 1.4, p.onde(3.6, 0.5) * 0.6)
+        let s = p.mobile(0)
         let pointe = pt(58, 66), bout = pt(84, 22)
         let dx = bout.x - pointe.x, dy = bout.y - pointe.y
         let l = hypot(dx, dy)
@@ -1188,6 +1375,7 @@ private enum Scenes {
         s.contour(plume, largeur: 0.9, debut: 0.56, duree: 0.08, graine: 217)
         s.trait([le(l - 11, 3.6), le(l - 11, -3.6)], largeur: 0.8, debut: 0.6, duree: 0.04, graine: 218)
         s.trait([le(1.5, 0), le(5.5, 0)], largeur: 0.6, debut: 0.62, duree: 0.04, graine: 219)
+        p.fixe()
 
         p.croix(pt(12, 16), 1.7, debut: 0.86, graine: 220)
         p.vaguelette(pt(84, 46), longueur: 7, debut: 0.9, graine: 221)
@@ -1218,7 +1406,7 @@ private enum Scenes {
                 debut: 0.08, graine: 233)
 
         // portée qui ondule
-        let portee = p.decale(0, p.onde(1.0) * 0.8)
+        let portee = p
         for i in 0..<3 {
             let pts = (0...40).map { k -> CGPoint in
                 let x = 8 + CGFloat(k) * 2.1
@@ -1228,9 +1416,9 @@ private enum Scenes {
             portee.trait(pts, largeur: 0.55, debut: 0.12 + Double(i) * 0.05, duree: 0.3, graine: 234 &+ i)
         }
 
-        let n1 = p.decale(0, p.onde(1.5) * 2.2).tourne(Double(p.onde(1.3)) * 6, autour: pt(30, 42))
+        let n1 = p.mobile(0)
         croche(n1, tete: pt(28, 48), hampe: 17, teinte: nil, debut: 0.35, graine: 240)
-        let n2 = p.decale(0, p.onde(1.3, 1.6) * 2.4).tourne(Double(p.onde(1.1, 0.8)) * 6, autour: pt(60, 30))
+        let n2 = p.mobile(1)
         // double croche liée
         let ta = pt(53, 38), tb = pt(66, 34)
         for (i, c) in [ta, tb].enumerated() {
@@ -1251,9 +1439,8 @@ private enum Scenes {
                  debut: 0.6)
         n2.trait([pt(ta.x + 3, 20.5), pt(tb.x + 3.8, 16.2)], largeur: 1.1, debut: 0.6, duree: 0.06, graine: 245)
 
-        let n3 = p.decale(p.onde(1.2, 3) * 1.2, p.onde(1.7, 2.5) * 2).tourne(Double(p.onde(1.4, 2)) * 8,
-                                                                               autour: pt(84, 22))
-        croche(n3, tete: pt(82, 30), hampe: 12, teinte: pal.braise, debut: 0.62, graine: 246)
+        croche(p.mobile(2), tete: pt(82, 30), hampe: 12, teinte: pal.braise, debut: 0.62, graine: 246)
+        p.fixe()
 
         p.mouvement(pt(20, 30), 8, de: 160, a: 210, debut: 0.8)
         p.vaguelette(pt(40, 12), longueur: 7, debut: 0.84, graine: 247)
@@ -1267,7 +1454,7 @@ private enum Scenes {
                 debut: 0, graine: 261)
         p.forme(caillou(pt(74, 70), 32, 32, rot: 9, graine: 262), pal.sauge, motif: .vagues, debut: 0.04, graine: 262)
 
-        let ensemble = p.decale(0, p.onde(1.1) * 1.4).tourne(Double(p.onde(0.8, 1)) * 2, autour: pt(52, 80))
+        let ensemble = p.mobile(0)
         let c = pt(52, 42)
         let tel = ensemble.tourne(6, autour: c)
         let coque = rectArrondi(c, 30, 54, r: 5.5)
@@ -1280,7 +1467,7 @@ private enum Scenes {
         tel.trait([pt(47.5, 24), pt(55, 24)], largeur: 0.55, debut: 0.42, duree: 0.04, graine: 266)
         let photo = rectArrondi(pt(52, 37), 24, 20, r: 0)
         tel.forme(photo, pal.braise, motif: .gribouillis, trame: pal.chaud.base, debut: 0.4, graine: 267)
-        tel.etincelle(pt(52, 37), 5, pal.miel, phase: 0.3, debut: 0.5, graine: 268)
+        tel.etincelle(pt(52, 37), 5, pal.miel, debut: 0.5, graine: 268)
         tel.contour(coeur(pt(43.5, 51), 2.4), largeur: 0.65, debut: 0.55, duree: 0.06, graine: 269)
         tel.trait(ovale(pt(49, 51), 1.5, 1.4, depart: 60, tours: 0.85, n: 20), largeur: 0.65, debut: 0.57, duree: 0.05,
                   graine: 270)
@@ -1300,6 +1487,7 @@ private enum Scenes {
         ensemble.trait(main, debut: 0.34, duree: 0.4, graine: 273)
         ensemble.trait(lisser([pt(40.4, 66), pt(39, 61.4), pt(37.2, 60)], pas: 6), largeur: 0.6, debut: 0.7,
                        duree: 0.05, graine: 274)
+        p.fixe()
 
         p.forme(caillou(pt(52, 91), 46, 15, rot: 3, graine: 278), pal.miel, motif: .vagues, trame: pal.chaud.base,
                 debut: 0.45, graine: 278)
@@ -1314,24 +1502,26 @@ private enum Scenes {
         p.forme(caillou(pt(36, 78), 56, 28, rot: -3, graine: 281), pal.ciel, motif: .vagues, debut: 0, graine: 281)
         p.forme(caillou(pt(78, 82), 28, 18, rot: 8, graine: 282), pal.peche, motif: .points, trame: pal.braise.base,
                 debut: 0.04, graine: 282)
-        let s = p.echelle(1 + 0.04 * p.onde(1.4), autour: pt(84, 56))
+        let s = p.mobile(0)
         s.forme(caillou(pt(84, 56), 15, 15, graine: 283), pal.miel, motif: .points, trame: pal.chaud.base,
                 debut: 0.08, graine: 283)
+        p.fixe()
 
         let sillage = lisser([pt(6, 62), pt(14, 52), pt(25, 51), pt(28, 59), pt(21, 64), pt(15, 57), pt(22, 45),
                               pt(34, 39), pt(47, 37)], pas: 10)
         p.pointilles(sillage, plein: 5, vide: 4, largeur: 0.8, debut: 0.2, duree: 0.45, graine: 284)
 
-        let av = p.decale(p.onde(0.9) * 1.6, p.onde(1.4, 0.5) * 2.2).tourne(Double(p.onde(1.4)) * 4,
-                                                                             autour: pt(66, 36))
+        let av = p.mobile(1)
         let nez = pt(88, 20), queueHaut = pt(46, 30), queueBas = pt(56, 52), pli = pt(61, 37), quille = pt(59, 45)
         av.papier([nez, queueHaut, pli, nez], debut: 0.3, graine: 285, cote: -1, densite: 0.4)
-        av.forme([nez, pli, quille, queueBas, nez], pal.peche, motif: .points, trame: pal.chaud.base, debut: 0.32, graine: 286)
+        av.forme([nez, pli, quille, queueBas, nez], pal.peche, motif: .points, trame: pal.chaud.base, debut: 0.32,
+                 graine: 286)
         av.forme([pli, queueBas, quille, pli], pal.chaud, motif: .rayures, trame: pal.chaud.fonce, debut: 0.34,
                  graine: 288)
         av.contour([nez, queueHaut, pli, nez], debut: 0.38, duree: 0.2, graine: 289)
         av.trait([nez, queueBas, pli], debut: 0.5, duree: 0.15, graine: 290)
         av.trait([pli, quille, queueBas], largeur: 0.8, debut: 0.6, duree: 0.1, graine: 291)
+        p.fixe()
 
         p.croix(pt(16, 18), 1.8, debut: 0.84, graine: 292)
         p.trait(nuage(pt(30, 22), 7, 3.6, bosses: 5), largeur: 0.8, debut: 0.86, duree: 0.12, graine: 293)
@@ -1348,7 +1538,7 @@ private enum Scenes {
                 debut: 0.08, graine: 303)
 
         let c = pt(50, 47)
-        let s = p.tourne(Double(p.onde(0.9)) * 4, autour: c)
+        let s = p.tourne(0, autour: c)
         let gauche = lisser([pt(37.5, 22), pt(38.5, 32), pt(46.5, 45), pt(46.5, 49), pt(38.5, 62), pt(37.5, 72)],
                             pas: 8)
         let droite = lisser([pt(62.5, 22), pt(61.5, 32), pt(53.5, 45), pt(53.5, 49), pt(61.5, 62), pt(62.5, 72)],
@@ -1360,12 +1550,12 @@ private enum Scenes {
                 pal.miel, motif: .points, trame: pal.chaud.base, debut: 0.3, graine: 305)
         s.forme(lisser([pt(39.2, 71.5), pt(42, 65), pt(50, 60.5), pt(58, 65), pt(60.8, 71.5)], ferme: true, pas: 6),
                 pal.miel, motif: .points, trame: pal.chaud.base, debut: 0.34, graine: 306)
-        var grains = Path()
-        for k in 0..<5 {
-            let y = 46 + CGFloat((p.t * 9 + Double(k) * 3.2).truncatingRemainder(dividingBy: 16))
-            grains.addEllipse(in: CGRect(x: 49.4, y: y, width: 1.2, height: 1.2))
+        // filet de sable : glisse d'un pas (3,2) en boucle
+        let grains = p.mobile(0)
+        for k in 0..<4 {
+            grains.plein(ovale(pt(50, 46.6 + CGFloat(k) * 3.2), 0.6, 0.6, n: 12), pal.chaud.fonce, debut: 0.5)
         }
-        if p.avancement(0.5, 0.1) >= 1 { s.ctx.fill(grains, with: .color(pal.chaud.fonce)) }
+        p.fixe()
         s.trait(gauche, debut: 0.16, duree: 0.3, graine: 307)
         s.trait(droite, debut: 0.2, duree: 0.3, graine: 308)
         for (i, y) in [CGFloat(19.5), CGFloat(74.5)].enumerated() {
@@ -1375,8 +1565,9 @@ private enum Scenes {
             s.contour(barre, largeur: 0.9, debut: 0.4 + Double(i) * 0.04, duree: 0.1, graine: 311 &+ i)
         }
 
-        p.etincelle(pt(20, 30), 4.4, pal.miel, phase: 0, debut: 0.75, graine: 313)
-        p.etincelle(pt(82, 16), 3.2, pal.braise, phase: 1.7, debut: 0.8, graine: 314)
+        p.mobile(1).etincelle(pt(20, 30), 4.4, pal.miel, debut: 0.75, graine: 313)
+        p.mobile(2).etincelle(pt(82, 16), 3.2, pal.braise, debut: 0.8, graine: 314)
+        p.fixe()
         p.eclat(pt(16, 54), 3, debut: 0.86, graine: 315)
         p.croix(pt(88, 58), 1.5, debut: 0.9, graine: 316)
     }
@@ -1388,7 +1579,7 @@ private enum Scenes {
                 debut: 0.06, graine: 322)
 
         let c = pt(42, 56)
-        let pelote = p.tourne(Double(p.onde(0.8)) * 5, autour: c)
+        let pelote = p.mobile(0)
         let boule = ovale(c, 19, 18, n: 80)
         pelote.forme(boule, pal.peche, motif: .uni, debut: 0.08, graine: 323)
         let dedans = pelote.clippe(boule)
@@ -1399,16 +1590,17 @@ private enum Scenes {
                          duree: 0.12, graine: 324 &+ i, couleur: pal.braise.base)
         }
         pelote.contour(boule, debut: 0.16, duree: 0.3, graine: 330)
+        p.fixe()
 
-        let ondule = p.onde(1.6)
         let fil = lisser([pt(58, 48), pt(66, 40), pt(76, 40), pt(78, 50), pt(70, 52), pt(70, 42),
-                          pt(80, 34 + ondule), pt(89, 36 + ondule * 1.5), pt(88, 44 + ondule * 2)], pas: 10)
+                          pt(80, 34), pt(89, 36), pt(88, 44)], pas: 10)
         p.trait(fil, largeur: 0.95, debut: 0.4, duree: 0.35, graine: 331)
 
-        let h = p.decale(0, p.onde(1.3, 1) * 1.6)
+        let h = p.mobile(1)
         h.forme(coeur(pt(22, 26), 6, rot: -14), pal.braise, motif: .points, trame: pal.braise.clair, debut: 0.6,
                 graine: 332)
         h.contour(coeur(pt(22, 26), 6, rot: -14), largeur: 0.9, debut: 0.64, duree: 0.1, graine: 332)
+        p.fixe()
         p.rond(pt(72, 18), 1.6, debut: 0.85, graine: 333)
         p.croix(pt(12, 48), 1.5, debut: 0.88, graine: 334)
         p.vaguelette(pt(60, 70), longueur: 6, debut: 0.9, graine: 335)

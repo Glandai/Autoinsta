@@ -502,7 +502,7 @@ extension View {
     /// Fondu et montée de 8 pt au premier affichage, décalé de `index × pas` (8 éléments au plus).
     func entreeEnCascade(_ index: Int, pas: Double = 0.04) -> some View { modifier(EntreeEnCascade(index: index, pas: pas)) }
 
-    /// Fond de l'app : dégradé de l'ambiance (taches qui dérivent) et trame de points.
+    /// Fond de l'app : dégradé de l'ambiance (taches qui dérivent lentement, animées par Core Animation).
     func fondAmbiance(anime: Bool = true) -> some View { background(FondAmbiance(anime: anime)) }
 
     /// Compatibilité 1.2 : le papier est devenu le fond d'ambiance.
@@ -556,65 +556,56 @@ private struct EntreeEnCascade: ViewModifier {
     }
 }
 
-// MARK: - Fond d'ambiance (dégradé animé + trame de points)
+// MARK: - Fond d'ambiance (dégradé animé par Core Animation)
 
-/// Le fond de l'app : `fond` uni, quatre taches de couleur de l'ambiance qui dérivent très lentement
-/// (un tour en 90 s, 60 s en `riches`), une lueur claire au centre (mode clair), puis une fine trame de points.
-/// Figé si « Réduire les animations » ou `animations: aucune` (ou `anime: false`) ; en pause quand la fenêtre
-/// n'est pas au premier plan.
+/// Le fond de l'app : `fond` uni et quatre taches de couleur de l'ambiance (plus une lueur claire au centre en mode
+/// clair). Les taches sont des calques `CAGradientLayer` radiaux dessinés **une fois** ; leur lente dérive
+/// (50 s par aller, aller-retour sans fin) est jouée par le serveur de rendu : l'app ne redessine rien, ~0 % de
+/// processeur. Figé si « Réduire les animations » (ou `anime: false`) ; en pause quand l'app passe en arrière-plan.
 struct FondAmbiance: View {
     var anime = true
     @Environment(\.jetons) private var j
-    @Environment(\.controlActiveState) private var etatFenetre
+    @ObservedObject private var app = ActiviteApp.partage
 
     var body: some View {
         ZStack {
             j.fond
             if anime && !j.fondFige {
-                TimelineView(.animation(minimumInterval: 1.0 / 15, paused: etatFenetre == .inactive)) { ctx in
-                    TachesAmbiance(temps: ctx.date.timeIntervalSinceReferenceDate)
-                }
+                CalquesTaches(taches: j.couleurs.rvb.taches, opacite: j.opaciteTaches, lueur: j.schema != .dark,
+                              periode: j.periodeDerive, enPause: !app.active)
             } else {
                 TachesAmbiance(temps: 0)
-            }
-            if j.opaciteTrame > 0 {
-                TrameDePoints()
             }
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
+
+    /// Position de repos (fraction de la vue), rayon (fraction du grand côté), amplitude de dérive et décalage.
+    static let placements: [(x: CGFloat, y: CGFloat, r: CGFloat, dx: CGFloat, dy: CGFloat, retard: Double)] = [
+        (0.04, 0.10, 0.62, 0.10, 0.08, 0.0),
+        (0.96, 0.04, 0.56, -0.08, 0.09, 0.27),
+        (0.94, 0.96, 0.66, -0.10, -0.07, 0.55),
+        (0.06, 0.94, 0.54, 0.09, -0.08, 0.80),
+    ]
 }
 
-/// Les taches, dessinées en dégradés radiaux (pas de flou : léger pour le processeur).
+/// Les taches au repos, dessinées une fois (vignettes, `anime: false`, rendus hors écran).
 struct TachesAmbiance: View {
-    /// Secondes (0 : position de repos).
-    let temps: Double
+    /// Gardé pour compatibilité : seule la position de repos est dessinée.
+    var temps: Double = 0
     @Environment(\.jetons) private var j
-
-    /// Position de repos (fraction de la vue), rayon (fraction du grand côté), fréquences et phases de la dérive.
-    private static let placements: [(x: Double, y: Double, r: Double, fx: Double, fy: Double, p: Double)] = [
-        (0.04, 0.10, 0.62, 1.0, 0.8, 0.0),
-        (0.96, 0.04, 0.56, 0.7, 1.1, 1.7),
-        (0.94, 0.96, 0.66, 0.9, 0.6, 3.1),
-        (0.06, 0.94, 0.54, 0.6, 1.0, 4.4),
-    ]
 
     var body: some View {
         let couleurs = j.couleurs.taches
         let opacite = j.opaciteTaches
         let sombre = j.schema == .dark
-        let periode = j.periodeDerive
         Canvas { ctx, taille in
             let grand = max(taille.width, taille.height)
-            let w = 2 * Double.pi / periode
-            for (i, p) in TachesAmbiance.placements.enumerated() where i < couleurs.count {
-                let dx = temps == 0 ? 0 : sin(temps * w * p.fx + p.p) * 0.10
-                let dy = temps == 0 ? 0 : cos(temps * w * p.fy + p.p * 0.7) * 0.08
-                let respire = temps == 0 ? 1 : 1 + 0.06 * sin(temps * w * 0.5 + p.p)
-                let centre = CGPoint(x: taille.width * (p.x + dx), y: taille.height * (p.y + dy))
-                let r = grand * p.r * respire
+            for (i, p) in FondAmbiance.placements.enumerated() where i < couleurs.count {
+                let centre = CGPoint(x: taille.width * p.x, y: taille.height * p.y)
+                let r = grand * p.r
                 let c = couleurs[i]
                 let degrade = Gradient(stops: [
                     .init(color: c.opacity(opacite), location: 0),
@@ -625,10 +616,8 @@ struct TachesAmbiance: View {
                 ctx.fill(Path(ellipseIn: CGRect(x: centre.x - r, y: centre.y - r, width: 2 * r, height: 2 * r)),
                          with: .radialGradient(degrade, center: centre, startRadius: 0, endRadius: r))
             }
-            // Lueur claire au centre (mode clair) : le cœur de la page reste lumineux, comme du papier.
             if !sombre {
-                let centre = CGPoint(x: taille.width * (0.52 + (temps == 0 ? 0 : sin(temps * w * 0.4) * 0.04)),
-                                     y: taille.height * 0.46)
+                let centre = CGPoint(x: taille.width * 0.52, y: taille.height * 0.46)
                 let r = grand * 0.42
                 let blanc = Gradient(stops: [
                     .init(color: Color.white.opacity(0.75), location: 0),
@@ -639,34 +628,162 @@ struct TachesAmbiance: View {
                          with: .radialGradient(blanc, center: centre, startRadius: 0, endRadius: r))
             }
         }
+        .drawingGroup()
     }
 }
 
-/// Fine trame de points (1,2 pt tous les 14 pt), plus présente sur les bords qu'au centre.
+/// Les taches en calques Core Animation (dérive hors de l'app).
+private struct CalquesTaches: NSViewRepresentable {
+    let taches: [RVB]
+    let opacite: Double
+    let lueur: Bool
+    let periode: Double
+    let enPause: Bool
+
+    func makeNSView(context: Context) -> VueTaches { VueTaches() }
+
+    func updateNSView(_ v: VueTaches, context: Context) {
+        v.configurer(taches: taches, opacite: opacite, lueur: lueur, periode: periode)
+        v.mettreEnPause(enPause)
+    }
+}
+
+final class VueTaches: NSView {
+    private var calques: [CAGradientLayer] = []
+    private let calqueLueur = CAGradientLayer()
+    private var periode: Double = 50
+    private var tailleAnimee: CGSize = .zero
+    private var enPause = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .never
+        for _ in FondAmbiance.placements {
+            let g = CAGradientLayer()
+            g.type = .radial
+            g.startPoint = CGPoint(x: 0.5, y: 0.5)
+            g.endPoint = CGPoint(x: 1, y: 1)
+            g.locations = [0, 0.32, 0.62, 1]
+            layer?.addSublayer(g)
+            calques.append(g)
+        }
+        calqueLueur.type = .radial
+        calqueLueur.startPoint = CGPoint(x: 0.5, y: 0.5)
+        calqueLueur.endPoint = CGPoint(x: 1, y: 1)
+        calqueLueur.locations = [0, 0.5, 1]
+        calqueLueur.colors = [NSColor.white.withAlphaComponent(0.75).cgColor, NSColor.white.withAlphaComponent(0.35).cgColor,
+                              NSColor.white.withAlphaComponent(0).cgColor]
+        layer?.addSublayer(calqueLueur)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) n'est pas utilisé") }
+
+    override var isFlipped: Bool { true }
+
+    func configurer(taches: [RVB], opacite: Double, lueur: Bool, periode p: Double) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.45)   // changement d'ambiance : fondu des couleurs
+        for (i, g) in calques.enumerated() {
+            let c = i < taches.count ? taches[i].nsColor : NSColor.clear
+            g.colors = [c.withAlphaComponent(opacite), c.withAlphaComponent(opacite * 0.72),
+                        c.withAlphaComponent(opacite * 0.28), c.withAlphaComponent(0)].map(\.cgColor)
+        }
+        calqueLueur.opacity = lueur ? 1 : 0
+        CATransaction.commit()
+        if p != periode {
+            periode = p
+            tailleAnimee = .zero
+            needsLayout = true
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        let t = bounds.size
+        guard t.width > 0, t.height > 0 else { return }
+        let grand = max(t.width, t.height)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (i, p) in FondAmbiance.placements.enumerated() {
+            let r = grand * p.r
+            calques[i].bounds = CGRect(x: 0, y: 0, width: 2 * r, height: 2 * r)
+            calques[i].position = CGPoint(x: t.width * p.x, y: t.height * p.y)
+        }
+        let rl = grand * 0.42
+        calqueLueur.bounds = CGRect(x: 0, y: 0, width: 2 * rl, height: 2 * rl)
+        calqueLueur.position = CGPoint(x: t.width * 0.52, y: t.height * 0.46)
+        CATransaction.commit()
+        // Les amplitudes dépendent de la taille : on relance la dérive seulement si elle a beaucoup changé.
+        if abs(t.width - tailleAnimee.width) > 80 || abs(t.height - tailleAnimee.height) > 80 {
+            tailleAnimee = t
+            animer(taille: t)
+        }
+    }
+
+    private func animer(taille t: CGSize) {
+        let debut = CACurrentMediaTime()
+        for (i, p) in FondAmbiance.placements.enumerated() {
+            let g = calques[i]
+            g.removeAllAnimations()
+            let duree = periode * (0.85 + 0.1 * Double(i))
+            let decalage = duree * p.retard
+            func aller(_ chemin: String, _ de: CGFloat, _ a: CGFloat, _ d: Double) -> CABasicAnimation {
+                let anim = CABasicAnimation(keyPath: chemin)
+                anim.fromValue = de
+                anim.toValue = a
+                anim.duration = d
+                anim.autoreverses = true
+                anim.repeatCount = .infinity
+                anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                anim.beginTime = debut - decalage
+                anim.isRemovedOnCompletion = false
+                return anim
+            }
+            g.add(aller("transform.translation.x", -t.width * p.dx, t.width * p.dx, duree), forKey: "x")
+            g.add(aller("transform.translation.y", -t.height * p.dy, t.height * p.dy, duree * 1.27), forKey: "y")
+            g.add(aller("transform.scale", 0.95, 1.06, duree * 0.8), forKey: "echelle")
+        }
+        calqueLueur.removeAllAnimations()
+        let l = CABasicAnimation(keyPath: "transform.translation.x")
+        l.fromValue = -t.width * 0.04
+        l.toValue = t.width * 0.04
+        l.duration = periode * 1.4
+        l.autoreverses = true
+        l.repeatCount = .infinity
+        l.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        calqueLueur.add(l, forKey: "x")
+        if enPause { geler() }
+    }
+
+    func mettreEnPause(_ p: Bool) {
+        guard p != enPause, let calque = layer else { return }
+        enPause = p
+        if p {
+            geler()
+        } else {
+            let pause = calque.timeOffset
+            calque.speed = 1
+            calque.timeOffset = 0
+            calque.beginTime = 0
+            calque.beginTime = calque.convertTime(CACurrentMediaTime(), from: nil) - pause
+        }
+    }
+
+    private func geler() {
+        guard let calque = layer, calque.speed != 0 else { return }
+        let t = calque.convertTime(CACurrentMediaTime(), from: nil)
+        calque.speed = 0
+        calque.timeOffset = t
+    }
+}
+
+/// Retirée (simplification du 22/11) : la trame de points n'est plus dessinée. Gardée pour compatibilité.
 struct TrameDePoints: View {
     var pas: CGFloat = 15
     var diametre: CGFloat = 1.5
-    @Environment(\.jetons) private var j
 
-    var body: some View {
-        let couleur = j.trame.opacity(j.opaciteTrame)
-        Canvas { ctx, taille in
-            var chemin = Path()
-            var y = pas / 2
-            while y < taille.height {
-                var x = pas / 2
-                while x < taille.width {
-                    chemin.addEllipse(in: CGRect(x: x - diametre / 2, y: y - diametre / 2, width: diametre, height: diametre))
-                    x += pas
-                }
-                y += pas
-            }
-            ctx.fill(chemin, with: .color(couleur))
-        }
-        .mask(
-            RadialGradient(colors: [Color.black.opacity(0.25), Color.black], center: .center, startRadius: 80, endRadius: 760)
-        )
-    }
+    var body: some View { EmptyView() }
 }
 
 /// Compatibilité 1.2 : le papier est devenu le fond d'ambiance.

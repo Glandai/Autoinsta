@@ -42,7 +42,7 @@ Le prompt est solide : une identité précise, des règles vérifiables, des for
 | Identifications | l'API demande une position | coordonnées x, y par identification |
 | Localisation | l'API veut un identifiant de lieu Facebook | `location_id` facultatif par série |
 | Interdits de légende | la relecture humaine rate des détails | contrôle automatique (clichés, ton commercial, mots du prompt, tirets, emojis, questions, hashtags génériques, comptes inventés, prénoms non publiables) |
-| Section 0 à compléter | aucun paramètre rempli | pré-rempli depuis le profil public ; l'approche doit être écrite par la photographe |
+| Section 0 à compléter | aucun paramètre rempli | vide au départ, rempli par l'onboarding de l'app pour n'importe quel compte ; l'activité adapte la charte ; l'approche est écrite par la personne |
 | Pas d'apprentissage | la demande : « l'IA évolue » | section 13 : identité, puis goûts, puis performances |
 | Images modifiables ? | risque d'outils génératifs | interdiction explicite : recadrer ou poser sur un fond, rien d'autre |
 

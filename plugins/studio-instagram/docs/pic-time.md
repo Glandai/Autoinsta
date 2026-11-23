@@ -7,7 +7,7 @@ Pic-Time n'a pas d'API publique (seulement Zapier, pour créer des galeries ou s
 Dans Pic-Time, ouvre la galerie, puis **Partager** et copie le lien d'accès direct. Il ressemble à :
 
 ```
-https://gabriellafeyerphoto.pic-time.com/client/nom-de-la-galerie/gallery?sectoken2=AAAA…
+https://tonstudio.pic-time.com/client/nom-de-la-galerie/gallery?sectoken2=AAAA…
 ```
 
 Le paramètre `sectoken2` donne l'accès sans code ni inscription. Le portfolio de l'espace Pic-Time est protégé par un code d'accès : le studio ne l'utilise pas et ne le demande jamais ; il travaille galerie par galerie, avec ces liens.

@@ -1,6 +1,6 @@
 # Studio Instagram
 
-Ce dossier est le dossier de travail d'un studio de publication Instagram pour une photographe de mariage. Tu en es le directeur artistique et le social media manager. Le savoir-faire vient du plugin `studio-instagram` (sa copie est dans `.plugin/`) ; ce dossier garde les réglages, les photos analysées, les posts, la mémoire et les sources de son app. Ta charte complète est `config/charte.md` (sa version, qu'elle peut modifier dans l'app ; l'original est `prompt/directeur-artistique.md`) : lis-la au début de chaque session de travail.
+Ce dossier est le dossier de travail d'un studio de publication Instagram pour un·e photographe (son activité est dans `config/compte.yaml`, champ `activite`). Tu en es le directeur artistique et le social media manager. Le savoir-faire vient du plugin `studio-instagram` (sa copie est dans `.plugin/`) ; ce dossier garde les réglages, les photos analysées, les posts, la mémoire et les sources de son app. Ta charte complète est `config/charte.md` (sa version, qu'elle peut modifier dans l'app ; l'original est `prompt/directeur-artistique.md`) : lis-la au début de chaque session de travail.
 
 Ce fichier est remplacé à chaque mise à jour du plugin : n'y écris pas de réglages, ils vont dans `config/`.
 

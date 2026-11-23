@@ -175,6 +175,9 @@ struct ResumeJour: Decodable, Identifiable {
 struct Reglages: Codable {
     var nom: String
     var compte_instagram: String
+    /// Ce que la personne photographie (« photographe de mariage »…) : voir `Reglages.activitesSuggerees`.
+    /// Renvoyée par `enregistrer-reglages` ; un moteur ancien qui ne la connaît pas l'ignore.
+    var activite: String
     var localisation: String
     var voix: String
     var langue: String
@@ -200,7 +203,7 @@ struct Reglages: Codable {
     var creation: ReglagesCreation?
 
     enum CodingKeys: String, CodingKey {
-        case nom, compte_instagram, localisation, voix, langue, fuseau, approche, exemples_de_legendes,
+        case nom, compte_instagram, activite, localisation, voix, langue, fuseau, approche, exemples_de_legendes,
              publication, routine, instagram, mise_en_page, interface, comptes_autorises, images_deja_publiees,
              planification, claude, creation
     }
@@ -210,6 +213,7 @@ struct Reglages: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(nom, forKey: .nom)
         try c.encode(compte_instagram, forKey: .compte_instagram)
+        try c.encode(activite, forKey: .activite)
         try c.encode(localisation, forKey: .localisation)
         try c.encode(voix, forKey: .voix)
         try c.encode(langue, forKey: .langue)
@@ -226,6 +230,66 @@ struct Reglages: Codable {
         try c.encodeIfPresent(claude, forKey: .claude)
         try c.encodeIfPresent(creation, forKey: .creation)
     }
+}
+
+extension Reglages {
+    /// Lecture : mêmes champs obligatoires qu'en 1.x ; `activite`, `planification`, `claude`, `creation` facultatifs.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        nom = try c.decode(String.self, forKey: .nom)
+        compte_instagram = try c.decode(String.self, forKey: .compte_instagram)
+        activite = c.texte(.activite) ?? Reglages.activiteParDefaut
+        localisation = try c.decode(String.self, forKey: .localisation)
+        voix = try c.decode(String.self, forKey: .voix)
+        langue = try c.decode(String.self, forKey: .langue)
+        fuseau = try c.decode(String.self, forKey: .fuseau)
+        approche = try c.decode(String.self, forKey: .approche)
+        exemples_de_legendes = try c.decode([String].self, forKey: .exemples_de_legendes)
+        publication = try c.decode(Publication.self, forKey: .publication)
+        routine = try c.decode(Routine.self, forKey: .routine)
+        instagram = try c.decode(ReglagesInstagram.self, forKey: .instagram)
+        mise_en_page = try c.decode(MiseEnPage.self, forKey: .mise_en_page)
+        interface = try c.decode(Interface.self, forKey: .interface)
+        comptes_autorises = try c.decode([String].self, forKey: .comptes_autorises)
+        images_deja_publiees = try c.decode([String].self, forKey: .images_deja_publiees)
+        planification = c.souple(ReglagesPlanification.self, .planification)
+        claude = c.souple(ReglagesClaude.self, .claude)
+        creation = c.souple(ReglagesCreation.self, .creation)
+    }
+
+    /// Valeur du moteur quand `activite` manque.
+    static let activiteParDefaut = "photographe de mariage"
+
+    /// Activités proposées dans l'onboarding et les Réglages (la personne peut aussi écrire la sienne).
+    static let activitesSuggerees = [
+        "photographe de mariage",
+        "photographe portrait et famille",
+        "photographe de mode et éditorial",
+        "photographe de voyage et de paysage",
+    ]
+
+    /// Les champs du profil encore à remplir, dans l'ordre de l'onboarding : `nom`, `compte_instagram`, `activite`,
+    /// `localisation`, `voix`, `langue` (vides ou « [À COMPLÉTER … »), puis `approche` si elle contient encore
+    /// « [À COMPLÉTER » (elle peut rester vide).
+    var champsACompleter: [String] {
+        var liste: [String] = []
+        for (nom, valeur) in [("nom", nom), ("compte_instagram", compte_instagram), ("activite", activite),
+                              ("localisation", localisation), ("voix", voix), ("langue", langue)]
+            where champACompleter(valeur) {
+            liste.append(nom)
+        }
+        if approche.contains("[À COMPLÉTER") { liste.append("approche") }
+        return liste
+    }
+
+    /// Tout le profil est rempli.
+    var profilComplet: Bool { champsACompleter.isEmpty }
+}
+
+/// Vrai si la valeur est vide (ou faite d'espaces) ou contient encore « [À COMPLÉTER » (modèle de config/compte.yaml).
+func champACompleter(_ valeur: String?) -> Bool {
+    guard let v = valeur?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return true }
+    return v.contains("[À COMPLÉTER") || v.contains("[A COMPLETER")
 }
 
 /// `creation` de config/compte.yaml : les étapes de l'assistant qui attendent la validation de la photographe.
@@ -760,12 +824,17 @@ extension ExecutionClaude {
         return id > autre.id
     }
 
+    /// Formateurs partagés (en créer un à chaque appel coûte cher dans un `TimelineView`).
+    private static let iso = ISO8601DateFormatter()
+    private static let isoFractions: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
     static func date(_ texte: String?) -> Date? {
         guard let t = texte?.nonVide else { return nil }
-        let f = ISO8601DateFormatter()
-        if let d = f.date(from: t) { return d }
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f.date(from: t)
+        return iso.date(from: t) ?? isoFractions.date(from: t)
     }
 }
 
@@ -1009,8 +1078,8 @@ struct Apparence: Codable, Equatable {
     var police = "jakarta"
     /// Titres : police (la même que le texte) | serif | arrondi | standard
     var titres = "police"
-    /// Fine trame de points sur le fond.
-    var points = true
+    /// Fine trame de points sur le fond : toujours coupée (fixée par le moteur).
+    var points = false
     /// compacte | confortable | aeree
     var densite = "confortable"
     /// Rayon des coins, de 0 à 28.
@@ -1019,11 +1088,16 @@ struct Apparence: Codable, Equatable {
     var animations = "normales"
     /// pleines | contours
     var icones = "pleines"
-    /// Ordre et écrans visibles (voir `ecransVisibles`). « creation » n'y est pas par défaut : on y va par le bouton « + ».
-    var ecrans = Ecran.allCases.filter { $0 != .creation }.map(\.rawValue)
+    /// Écrans de la barre d'icônes, fixés par le moteur : aujourdhui, galeries, statistiques, reglages
+    /// (« + » ouvre `creation` ; idées et aperçu passent par « + » et l'accueil ; charte et règles par les Réglages).
+    var ecrans = Apparence.ecransEssentiels.map(\.rawValue)
 
     /// Les valeurs d'origine (ARCHITECTURE.md §4.3).
     static let defaut = Apparence()
+
+    /// Seuls champs que la photographe (ou Claude) peut changer ; le moteur fixe tous les autres.
+    static let reglables = ["nom_affiche", "salutation", "mode", "ambiance"]
+    static let ecransEssentiels: [Ecran] = [.aujourdhui, .galeries, .statistiques, .reglages]
 
     static let modes = ["auto", "clair", "sombre"]
     static let ambiances = ["provence", "lavande", "aube", "sauge", "nuit"]
@@ -1112,15 +1186,17 @@ extension Apparence {
         a.nom_affiche = nom_affiche.nonVide ?? d.nom_affiche
         a.salutation = salutation.nonVide ?? d.salutation
         a.mode = choix(mode, Apparence.modes, d.mode)
-        a.couleurs = couleurs.normalisees()
         a.ambiance = choix(ambiance, Apparence.ambiances, d.ambiance)
-        a.police = choix(police, Apparence.polices, d.police)
-        a.titres = choix(titres, Apparence.stylesTitres, d.titres)
-        a.densite = choix(densite, Apparence.densites, d.densite)
-        a.arrondi = min(28, max(0, arrondi))
-        a.animations = choix(animations, Apparence.niveauxAnimations, d.animations)
-        a.icones = choix(icones, Apparence.stylesIcones, d.icones)
-        a.ecrans = ecransVisibles.map(\.rawValue)
+        // Comme le moteur : tout le reste garde sa valeur d'origine (app simple et rapide).
+        a.couleurs = d.couleurs
+        a.police = d.police
+        a.titres = d.titres
+        a.points = false
+        a.densite = d.densite
+        a.arrondi = d.arrondi
+        a.animations = d.animations
+        a.icones = d.icones
+        a.ecrans = d.ecrans
         return a
     }
 

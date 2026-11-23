@@ -23,9 +23,7 @@ struct VueCreation: View {
     @Local private var nouvellesErreurs = false
 
     // 1. Idée
-    @Local private var choixIdee: ChoixIdee? = nil
-    @Local private var ideeLibre = ""
-    @Local private var galerieLibre: String? = nil
+    @Local private var ideesDemandees = false
 
     // 3. Photos
     @Local private var medias: [MediaModifie] = []
@@ -59,7 +57,6 @@ struct VueCreation: View {
     @Local private var confirmerMaintenant = false
     @Local private var celebre = false
 
-    private enum ChoixIdee: Equatable { case idee(Int), libre }
     private enum ChoixMusique: Equatable { case proposee, piste(String), aucune }
 
     // MARK: État du jour
@@ -138,7 +135,6 @@ struct VueCreation: View {
         .task {
             if etat.reglages == nil { await etat.chargerReglages() }
             if etat.vue == nil || etat.vue?.jour != etat.jour { await etat.chargerJour() }
-            if etat.galeries.isEmpty { await etat.chargerGaleries() }
             synchroniser()
         }
         .onChange(of: cleSynchro) { _, _ in if initialise { synchroniser() } }
@@ -173,6 +169,7 @@ struct VueCreation: View {
     private func synchroniser() {
         valides = lireValides()
         let n = etapeNaturelle
+        if n == 0 { lancerIdeesSiBesoin() }
         if !initialise {
             preparer(n)
             etape = n
@@ -195,8 +192,6 @@ struct VueCreation: View {
         enLecture = nil
         nouvellesErreurs = false
         switch k {
-        case 0:
-            if choixIdee == nil, let n = vue?.choix?.numero { choixIdee = .idee(n) }
         case 2: preparerPhotos()
         case 3:
             legende = post?.legende ?? ""
@@ -250,139 +245,31 @@ struct VueCreation: View {
         Illustration(sujet, taille: taille).frame(width: taille, height: taille)
     }
 
-    // MARK: 1. Idée
+    // MARK: 1. Idée (trois cartes, trois actions)
 
     @ViewBuilder private func pageIdee(compacte: Bool) -> some View {
-        let idees = vue?.idees ?? []
-        EtapeAssistant(etapes: etapes, courante: 0, titre: "De quoi parle ce post ?",
-                       texte: idees.isEmpty ? "Écris ton idée comme un titre de magazine : Claude prépare le reste."
-                                            : "Choisis une des idées du jour, ou écris la tienne.",
-                       fermer: fermer, fond: false) {
-            ScrollView {
-                VStack(spacing: j.esp.blocs + 4) {
-                    if idees.isEmpty {
-                        illustration(.idee, compacte ? 110 : 150)
-                        carteLibre(grande: true).frame(maxWidth: 520)
-                    } else {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 470), spacing: j.esp.gouttiere, alignment: .top)],
-                                  spacing: j.esp.gouttiere) {
-                            ForEach(idees) { carteIdee($0) }
-                            carteLibre(grande: false)
-                        }
-                        .frame(maxWidth: 960)
-                    }
-                }
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity)
+        EtapeAssistant(etapes: etapes, courante: 0, titre: "De quoi parle ce post ?", fermer: fermer, fond: false) {
+            TroisCartesIdees(hauteurCouverture: compacte ? 150 : 200, lancer: lancerIdees) { idee in
+                Task { await etat.decider("choix", "\(idee.numero)") }
             }
         } actions: {
-            if etat.claudeTravaille {
-                Text("Claude termine une autre tâche…").typo(.legende)
-            }
-            Button { creer() } label: { Label("Créer ce post", systemImage: "wand.and.stars") }
-                .buttonStyle(BoutonPrincipal(enCours: etat.occupe))
-                .keyboardShortcut(.defaultAction)
-                .disabled(!peutCreer)
-        }
-    }
-
-    private var peutCreer: Bool {
-        guard let c = choixIdee, !occupe, !etat.claudeTravaille else { return false }
-        if c == .libre { return ideeLibre.nonVide != nil }
-        return true
-    }
-
-    private func carteIdee(_ idee: Idee) -> some View {
-        let choisie = choixIdee == .idee(idee.numero)
-        let forme = RoundedRectangle(cornerRadius: j.rayons.photo, style: .continuous)
-        return Carte(style: .cliquable, choisie: choisie) {
-            HStack(alignment: .top, spacing: 14) {
-                ImageLocale(chemin: idee.couverture)
-                    .frame(width: 92, height: 115)
-                    .clipShape(forme)
-                    .overlay(alignment: .topLeading) { Pastille("\(idee.numero)", ton: .forte).padding(5) }
-                VStack(alignment: .leading, spacing: 6) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 5) { pastillesIdee(idee) }
-                        VStack(alignment: .leading, spacing: 5) { pastillesIdee(idee) }
-                    }
-                    Text(idee.titre ?? "Idée \(idee.numero)").typo(.titre3).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                    if let p = idee.pitch?.nonVide {
-                        Text(p).typo(.legende).lineLimit(3).fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            ActionsIdees { texte in
+                Task { await etat.decider("libre", texte) }
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation(j.anim(.selection)) { choixIdee = .idee(idee.numero) } }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAddTraits(choisie ? .isSelected : [])
     }
 
-    @ViewBuilder private func pastillesIdee(_ idee: Idee) -> some View {
-        Pastille(LibellesIdee.format(idee), symbole: LibellesIdee.symboleFormat(idee.format))
-        if let p = idee.pilier_libelle?.nonVide { Pastille(p) }
+    private func lancerIdees() {
+        guard etat.librePourIdees else { return }
+        Task { _ = await etat.lancerClaude(.idees, jour: etat.jour) }
     }
 
-    private func carteLibre(grande: Bool) -> some View {
-        Carte(choisie: choixIdee == .libre) {
-            VStack(alignment: .leading, spacing: j.esp.pile + 2) {
-                HStack(spacing: 8) {
-                    Image(systemName: "square.and.pencil").font(.system(size: 15, weight: .regular))
-                    Text("Ton idée").typo(.titre3)
-                }
-                ChampDoux(texte: $ideeLibre, exemple: "Écris ton idée comme un titre de magazine…",
-                          lignes: grande ? 2...5 : 1...3, envoyer: { if peutCreer { creer() } })
-                if !etat.galeries.isEmpty {
-                    Menu {
-                        Button("Laisser Claude choisir") { galerieLibre = nil }
-                        Divider()
-                        ForEach(etat.galeries) { g in
-                            Button(nomGalerie(g)) {
-                                galerieLibre = g.id
-                                choixIdee = .libre
-                            }
-                        }
-                    } label: {
-                        Label(galerieLibre.flatMap { id in etat.galeries.first { $0.id == id } }.map(nomGalerie)
-                              ?? "Galerie : au choix de Claude", systemImage: "photo.stack")
-                    }
-                    .menuStyle(.button)
-                    .menuIndicator(.hidden)
-                    .buttonStyle(BoutonPilule(.claire, taille: .petite))
-                    .fixedSize()
-                }
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation(j.anim(.selection)) { choixIdee = .libre } }
-        .onChange(of: ideeLibre) { _, t in
-            if t.nonVide != nil, choixIdee != .libre { withAnimation(j.anim(.selection)) { choixIdee = .libre } }
-        }
-    }
-
-    private func nomGalerie(_ g: Galerie) -> String {
-        [g.lieu.nonVide ?? g.id, g.date.nonVide].compactMap { $0 }.joined(separator: " · ")
-    }
-
-    private func creer() {
-        guard peutCreer, let c = choixIdee else { return }
-        switch c {
-        case .idee(let n):
-            Task { await etat.decider("choix", "\(n)") }
-        case .libre:
-            guard var texte = ideeLibre.nonVide else { return }
-            if let id = galerieLibre, let g = etat.galeries.first(where: { $0.id == id }) {
-                texte += "\n(Galerie à utiliser : \(nomGalerie(g)) — série « \(g.id) »)"
-            }
-            let envoi = texte
-            Task {
-                await etat.decider("libre", envoi)
-                if etat.vue?.statut == "idee_choisie" { ideeLibre = "" }
-            }
-        }
+    /// Pas encore d'idées pour ce jour : Claude en prépare trois tout de suite (une seule fois par ouverture).
+    private func lancerIdeesSiBesoin() {
+        guard !ideesDemandees, (vue?.idees ?? []).isEmpty, etat.executionIdeesDuJour?.enCours != true,
+              etat.librePourIdees else { return }
+        ideesDemandees = true
+        lancerIdees()
     }
 
     // MARK: 2. Claude au travail
@@ -506,7 +393,6 @@ struct VueCreation: View {
                        retour: retour(depuis: 2), fermer: fermer, fond: false) {
             ScrollView {
                 VStack(spacing: j.esp.blocs + 4) {
-                    if !compacte { illustration(.photos, 110) }
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 132, maximum: 170), spacing: 14)], spacing: 14) {
                         if modifiable {
                             ForEach(Array(medias.enumerated()), id: \.element.id) { i, m in
@@ -750,7 +636,6 @@ struct VueCreation: View {
                 .frame(maxWidth: 600)
                 ScrollView {
                     VStack(alignment: .leading, spacing: j.esp.blocs) {
-                        if !compacte { illustration(.legende, 120) }
                         controleLegende(modifiee: modifiee, trop: trop)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -858,7 +743,6 @@ struct VueCreation: View {
                        texte: musiqueProposee != nil ? "Claude a choisi une piste ; garde-la ou prends-en une autre." : "Choisis une piste, ou garde le silence.",
                        retour: retour(depuis: 4), fermer: fermer, fond: false) {
             HStack(alignment: .top, spacing: j.esp.sections * 0.7) {
-                if !compacte { illustration(.musique, 170) }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         if let m = musiqueProposee {
@@ -1052,7 +936,6 @@ struct VueCreation: View {
         let erreurs = v?.erreurs ?? []
         let vigilance = (v?.alertes ?? []) + (v?.avertissements ?? [])
         VStack(alignment: .leading, spacing: j.esp.blocs) {
-            if !compacte { illustration(.apercu, 100) }
             if !erreurs.isEmpty {
                 Pastille("À corriger avant publication", symbole: "exclamationmark.triangle.fill", ton: .alerte)
                 ListePoints(elements: erreurs, couleur: j.alerte)
@@ -1063,9 +946,6 @@ struct VueCreation: View {
                 ListePoints(elements: vigilance)
             } else if v != nil {
                 Pastille("Prêt à publier", symbole: "checkmark.circle.fill", ton: .succes)
-            }
-            if let i = (post?.intention ?? post?.pourquoi)?.nonVide {
-                VoixDeClaude(i, compacte: true)
             }
             VStack(alignment: .leading, spacing: j.esp.pile + 2) {
                 Text("Changer quelque chose ?").typo(.titre3)

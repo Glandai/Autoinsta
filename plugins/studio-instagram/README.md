@@ -4,7 +4,7 @@ Un directeur artistique Instagram qui vit sur le Mac de la photographe. Chaque m
 
 Depuis la version 2.0, tout se passe dans une app Mac, **Studio Instagram** : elle lance Claude elle-même, en arrière-plan, et c'est le Mac qui tient les horaires. Plus besoin de garder l'application Claude ouverte.
 
-Conçu pour @gabriellafeyer.photo, à partir du prompt « Directeur artistique Instagram » (`prompt/directeur-artistique.md`).
+Fonctionne pour n'importe quel compte : à l'installation, l'app demande ton nom, ton compte Instagram et ton activité, et Claude adapte la charte (`prompt/directeur-artistique.md`, écrite au départ pour la photographie de mariage) à ce que tu fais.
 
 ## Ce qu'il faut
 

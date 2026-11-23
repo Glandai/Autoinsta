@@ -1,6 +1,16 @@
 # Catalogue « atelier-photo » : plugin Studio Instagram
 
-Ce dossier est un catalogue de plugins Claude (une « marketplace ») qui contient un seul plugin : **studio-instagram**, le studio de publication Instagram pour photographe de mariage. Depuis la version 2.0, il installe aussi une app Mac, **Studio Instagram**, qui fait travailler Claude en arrière-plan et laisse le Mac tenir les horaires. Le plugin ne contient ni photo, ni jeton, ni donnée personnelle : seulement les skills, le moteur, les sources de l'app, la charte, la documentation et des modèles de réglages pré-remplis à partir du profil public.
+## Le plus simple : l'installateur Mac (.pkg)
+
+1. Télécharge **Studio-Instagram-2.1.0.pkg** dans la page [Releases](https://github.com/Glandai/Autoinsta/releases) du dépôt.
+2. Double-clique dessus et suis l'installateur : l'app **Studio Instagram** arrive dans Applications.
+3. Ouvre-la : elle crée ton studio, te demande ton nom, ton compte Instagram et ce que tu photographies, puis te guide pour connecter Claude et Instagram. Aucune commande, aucun outil à installer.
+
+Il faut un Mac Apple Silicon (M1 ou plus récent) sous macOS 14 ou plus, et un abonnement Claude. L'installateur n'est pas signé par un compte développeur Apple : si macOS refuse de l'ouvrir, fais clic droit › Ouvrir, ou Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ». Pour le reconstruire : `bash paquet/fabriquer-pkg.sh`.
+
+## Pour les habitués de Claude : le plugin
+
+Ce dossier est aussi un catalogue de plugins Claude (une « marketplace ») qui contient un seul plugin : **studio-instagram**, le studio de publication Instagram pour photographe (mariage par défaut, toute activité possible). Depuis la version 2.0, il installe aussi une app Mac, **Studio Instagram**, qui fait travailler Claude en arrière-plan et laisse le Mac tenir les horaires. Le plugin ne contient ni photo, ni jeton, ni donnée personnelle : seulement les skills, le moteur, les sources de l'app, la charte, la documentation et des modèles de réglages vierges, remplis par l'onboarding de l'app.
 
 ```
 plugin-studio-instagram/

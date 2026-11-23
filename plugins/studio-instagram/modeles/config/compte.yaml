@@ -1,20 +1,20 @@
-# Paramètres du compte (section 0 du prompt).
-# Pré-rempli à partir du profil public : Gabriella relit et corrige.
+# Paramètres du compte (section 0 de la charte). Remplis par l'onboarding de l'app Studio Instagram,
+# modifiables ensuite dans l'app (Réglages › Compte).
 # Tant qu'un champ contient [À COMPLÉTER], le studio le signale dans ses alertes.
 
-nom: "Gabriella Feyer"
-compte_instagram: "gabriellafeyer.photo"
-localisation: "Basée à Nîmes. Provence, Côte d'Azur, Occitanie, mariages à destination en Europe (à confirmer)"
+nom: "[À COMPLÉTER : ton prénom et ton nom]"
+compte_instagram: "[À COMPLÉTER : ton compte Instagram, sans @]"
+# Ce que tu photographies : la charte s'y adapte (photographe de mariage par défaut).
+activite: "photographe de mariage"
+localisation: "[À COMPLÉTER : ta ville et ta zone de travail]"
 voix: "[À COMPLÉTER : je ou nous]"
 langue: "[À COMPLÉTER : francais, anglais, ou bilingue (français puis anglais)]"
 fuseau: "Europe/Paris"
 
 approche: |
-  [À COMPLÉTER par Gabriella, en quelques phrases : sa manière de travailler, argentique
-  et/ou numérique, son rapport aux mariés, ce qui distingue son travail.
-  C'est la seule source autorisée pour parler de sa pratique.]
-  Repères publics à confirmer ou réécrire : « Artful | Documentary | Editorial »,
-  « Digital + Film », photographier les moments « tels qu'ils sont », « loin des poses forcées ».
+  [À COMPLÉTER, en quelques phrases : ta manière de travailler, argentique et/ou numérique,
+  ton rapport aux personnes que tu photographies, ce qui distingue ton travail.
+  C'est la seule source autorisée pour parler de ta pratique.]
 
 # 2 ou 3 vraies légendes au bon ton (facultatif mais très utile)
 exemples_de_legendes: []

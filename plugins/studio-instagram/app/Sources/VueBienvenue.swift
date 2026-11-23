@@ -3,10 +3,12 @@ import SwiftUI
 
 // Onboarding plein écran (DESIGN.md §4.2) et feuille de connexion à Claude (Réglages, reconnexion).
 //
-// Cinq pages, sans carte ni « Passer », points de progression en bas :
-//   1. Bonjour !  ·  2. Claude (détecté, ou installé et connecté pas à pas ; obligatoire)
-//   3. Instagram (route Facebook ou Instagram seule, guide Meta, identifiants ; « Plus tard » permis)
-//   4. Rythme (jours, heures, idées du matin, étapes à valider, planification)  ·  5. Tout est prêt !
+// Sept pages, sans carte ni « Passer », points de progression en bas (n'importe quel compte) :
+//   1. Bonjour !  ·  2. Toi (nom, compte, activité, ville)  ·  3. Ta façon d'écrire (voix, langue, approche)
+//   4. Claude (détecté, ou installé et connecté pas à pas ; obligatoire)
+//   5. Instagram (route Facebook ou Instagram seule, guide Meta, identifiants ; « Préparer sans publier » permis)
+//   6. Rythme (jours, heures, idées du matin, étapes à valider, planification)  ·  7. Tout est prêt !
+// Hors mariage, Claude adapte la charte à l'activité (tâche `charte`) dès qu'il est connecté.
 //
 // Contrat avec la coque (StudioApp.swift) :
 //   - La coque affiche `VueBienvenue()` tant que `!etat.studioInstalle || !claudeDejaPret || !onboardingTermine`.
@@ -54,6 +56,12 @@ struct VueBienvenue: View {
     @Local private var avance = true
     @Local private var demarre = false
 
+    // Toi, ta façon d'écrire
+    @Local private var toi = BrouillonToi()
+    @Local private var toiLu = false
+    @Local private var enregistrementToi = false
+    @Local private var charteLancee = false
+
     // Claude
     @Local private var code = ""
     @Local private var claudeAvanceSeul = false
@@ -76,7 +84,7 @@ struct VueBienvenue: View {
     // Fin
     @Local private var lancement = false
 
-    private let total = 5
+    private let total = 7
     private static let jours = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
     var body: some View {
@@ -91,7 +99,11 @@ struct VueBienvenue: View {
             .animation(j.anim(.page), value: cle)
         }
         .onAppear { demarrer() }
-        .onChange(of: etat.claudePret) { _, pret in if pret { avancerApresClaude() } }
+        .onChange(of: etat.claudePret) { _, pret in
+            guard pret else { return }
+            adapterCharteSiBesoin()
+            avancerApresClaude()
+        }
         .onChange(of: etat.dossier) { _, _ in
             Task { await etat.chargerClaude(silencieux: true) }
         }
@@ -101,20 +113,22 @@ struct VueBienvenue: View {
 
     /// Identité de la page affichée : la changer fait glisser la page (`.suivante` ou `.precedente`).
     private var cle: String {
-        if etape >= 1 && !etat.studioInstalle { return "studio" }
-        if etape == 2 { return instaRelie ? "2-relie" : "2-\(phaseInsta.rawValue)" }
+        if etape >= Pg.toi && !etat.studioInstalle { return "studio" }
+        if etape == Pg.instagram { return instaRelie ? "2-relie" : "2-\(phaseInsta.rawValue)" }
         return "\(etape)"
     }
 
     @ViewBuilder private func page(compacte: Bool) -> some View {
-        if etape >= 1 && !etat.studioInstalle {
+        if etape >= Pg.toi && !etat.studioInstalle {
             pageStudio(compacte: compacte)
         } else {
             switch etape {
-            case 0: pageBonjour(compacte: compacte)
-            case 1: pageClaude(compacte: compacte)
-            case 2: pageInstagram(compacte: compacte)
-            case 3: pageRythme(compacte: compacte)
+            case Pg.bonjour: pageBonjour(compacte: compacte)
+            case Pg.toi: pageToi(compacte: compacte)
+            case Pg.ecriture: pageEcriture(compacte: compacte)
+            case Pg.claude: pageClaude(compacte: compacte)
+            case Pg.instagram: pageInstagram(compacte: compacte)
+            case Pg.rythme: pageRythme(compacte: compacte)
             default: pagePret(compacte: compacte)
             }
         }
@@ -126,8 +140,9 @@ struct VueBienvenue: View {
         guard !demarre else { return }
         demarre = true
         // Déjà fait une fois : l'onboarding revient seulement parce que le studio ou Claude manque.
-        if UserDefaults.standard.bool(forKey: CleOnboarding.termine) { etape = 1 }
+        if UserDefaults.standard.bool(forKey: CleOnboarding.termine) { etape = Pg.claude }
         if etat.claude == nil { Task { await etat.chargerClaude(silencieux: true) } }
+        Task { await lireToi() }
         lireRythme()
     }
 
@@ -149,11 +164,15 @@ struct VueBienvenue: View {
 
     private func arrivee(_ n: Int) {
         switch n {
-        case 1:
+        case Pg.toi:
+            Task { await lireToi() }
+        case Pg.pret:
+            adapterCharteSiBesoin()
+        case Pg.claude:
             if etat.claudePret { avancerApresClaude() } else { Task { await etat.chargerClaude(silencieux: true) } }
-        case 2:
+        case Pg.instagram:
             Task { await etat.chargerInstagram(silencieux: true) }
-        case 3:
+        case Pg.rythme:
             Task {
                 if etat.reglages == nil { await etat.chargerReglages() }
                 await etat.chargerPlanification(silencieux: true)
@@ -166,13 +185,13 @@ struct VueBienvenue: View {
 
     /// Claude est (ou vient d'être) prêt : les cercles se cochent, puis Instagram glisse après 1,2 s (une fois).
     private func avancerApresClaude() {
-        guard etape == 1, etat.studioInstalle, !claudeAvanceSeul else { return }
+        guard etape == Pg.claude, etat.studioInstalle, !claudeAvanceSeul else { return }
         claudeAvanceSeul = true
         code = ""
         AccessibilityNotification.Announcement("C'est bon, Claude est prêt.").post()
         Task {
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            if etape == 1 && etat.claudePret { aller(2) }
+            if etape == Pg.claude && etat.claudePret { aller(Pg.instagram) }
         }
     }
 
@@ -185,36 +204,208 @@ struct VueBienvenue: View {
 
     // MARK: 1. Bonjour
 
-    /// « Bonjour Gabriella ! » : premier mot de `nom` (config/compte.yaml), sinon « Bonjour ! ».
+    /// « Bonjour <prénom> ! » quand le nom est connu (pas « [À COMPLÉTER… »), sinon « Bonjour ! ».
     private var titreBonjour: String {
-        let prenom = (etat.reglages?.nom ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(separator: " ").first.map(String.init) ?? ""
+        let nom = toi.nom.isEmpty ? BrouillonToi.propre(etat.reglages?.nom) : toi.nom
+        let prenom = nom.split(separator: " ").first.map(String.init) ?? ""
         return prenom.isEmpty ? "Bonjour !" : "Bonjour \(prenom) !"
     }
 
     private func pageBonjour(compacte: Bool) -> some View {
-        PageOnboarding(etape: 0, total: total, titre: titreBonjour,
+        PageOnboarding(etape: Pg.bonjour, total: total, titre: titreBonjour,
                        texte: "Chaque matin, des idées de post : tu choisis, Claude prépare, tu valides d'un clic.",
                        fond: false) {
             Illustration(.bienvenue, taille: compacte ? 200 : 280)
         } action: {
-            Button { aller(1) } label: { Label("Commencer", systemImage: "arrow.right") }
+            Button { aller(Pg.toi) } label: { Label("Commencer", systemImage: "arrow.right") }
                 .buttonStyle(.principal)
                 .keyboardShortcut(.defaultAction)
         }
     }
 
-    // MARK: Studio introuvable
+    // MARK: 2. Toi  ·  3. Ta façon d'écrire
 
-    private func pageStudio(compacte: Bool) -> some View {
-        PageOnboarding(etape: 1, total: total, titre: "Où est ton studio ?",
-                       texte: "Je ne trouve pas le dossier du studio sur ce Mac. Montre-le-moi : c'est celui qui a été créé à l'installation.",
-                       retour: { aller(0) }, fond: false) {
-            Illustration(.erreur, taille: compacte ? 170 : 230)
+    /// Pré-remplit avec les réglages ; les « [À COMPLÉTER… » du modèle deviennent des champs vides.
+    private func lireToi() async {
+        guard !toiLu, etat.studioInstalle else { return }
+        if etat.reglages == nil { await etat.chargerReglages() }
+        guard !toiLu, let r = etat.reglages else { return }
+        toi = BrouillonToi(r)
+        toiLu = true
+    }
+
+    /// Le compte collé avec « @ » ou en lien (instagram.com/…) devient le nom seul.
+    private var compteSansArobase: Binding<String> {
+        Binding(get: { toi.compte }, set: { toi.compte = BrouillonToi.nettoyerCompte($0) })
+    }
+
+    private func pageToi(compacte: Bool) -> some View {
+        PageOnboarding(etape: Pg.toi, total: total, titre: "Parle-moi de toi.",
+                       texte: "Pour que le studio écrive pour toi, et pour personne d'autre.",
+                       retour: { aller(Pg.bonjour) }, fond: false) {
+            Illustration(.bienvenue, taille: compacte ? 70 : 100)
+        } contenu: {
+            VStack(alignment: .leading, spacing: j.esp.blocs) {
+                HStack(alignment: .top, spacing: 12) {
+                    Question("Ton prénom et ton nom") {
+                        ChampDoux(texte: $toi.nom, exemple: "Prénom Nom", lignes: 1...1)
+                    }
+                    Question("Ton compte Instagram") {
+                        ChampDoux(texte: compteSansArobase, exemple: "@moncompte", lignes: 1...1)
+                    }
+                }
+                Question("Ce que tu photographies") {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 2), spacing: 6) {
+                        ForEach(Reglages.activitesSuggerees, id: \.self) { valeur in
+                            let choisie = toi.activite.caseInsensitiveCompare(valeur) == .orderedSame
+                            Button { toi.activite = valeur } label: { Text(BrouillonToi.titreActivite(valeur)) }
+                                .buttonStyle(.pilule(choisie ? .sombre : .claire, taille: .petite, pleineLargeur: true))
+                                .accessibilityAddTraits(choisie ? .isSelected : [])
+                        }
+                    }
+                    ChampDoux(texte: $toi.activite, exemple: "Ou dis-le avec tes mots", lignes: 1...1)
+                }
+                Question("Ta ville, ta zone de travail", facultatif: true) {
+                    ChampDoux(texte: $toi.localisation, exemple: "Ta ville et ses alentours", lignes: 1...1)
+                }
+            }
         } action: {
-            Button { etat.choisirDossier() } label: { Label("Choisir le dossier…", systemImage: "folder") }
+            Button { aller(Pg.ecriture) } label: { Label("Continuer", systemImage: "arrow.right") }
                 .buttonStyle(.principal)
                 .keyboardShortcut(.defaultAction)
+                .disabled(!toi.identiteComplete)
+        }
+    }
+
+    private func pageEcriture(compacte: Bool) -> some View {
+        PageOnboarding(etape: Pg.ecriture, total: total, titre: "Ta façon d'écrire.",
+                       texte: "Pour que les légendes te ressemblent.",
+                       retour: { aller(Pg.toi) }, fond: false) {
+            Illustration(.legende, taille: compacte ? 70 : 110)
+        } contenu: {
+            VStack(alignment: .leading, spacing: j.esp.blocs) {
+                Question("Tu parles en") {
+                    HStack(spacing: 6) {
+                        choix("Je", valeur: "je", selection: $toi.voix)
+                        choix("Nous", valeur: "nous", selection: $toi.voix)
+                    }
+                }
+                Question("Langue des légendes") {
+                    HStack(spacing: 6) {
+                        choix("Français", valeur: "francais", selection: $toi.langue)
+                        choix("Anglais", valeur: "anglais", selection: $toi.langue)
+                        choix("Les deux", valeur: "bilingue", selection: $toi.langue)
+                    }
+                }
+                Question("Ton approche, en quelques phrases", facultatif: true) {
+                    ChampDoux(texte: $toi.approche,
+                              exemple: "Ta manière de travailler, ce qui distingue ton travail…", lignes: 3...5)
+                }
+            }
+        } action: {
+            Button { enregistrerToi() } label: { Label("Continuer", systemImage: "arrow.right") }
+                .buttonStyle(BoutonPrincipal(enCours: enregistrementToi))
+                .keyboardShortcut(.defaultAction)
+                .disabled(!toi.complet || enregistrementToi)
+        }
+    }
+
+    private func choix(_ titre: String, valeur: String, selection: Binding<String>) -> some View {
+        let choisi = selection.wrappedValue == valeur
+        return Button { selection.wrappedValue = valeur } label: { Text(titre) }
+            .buttonStyle(.pilule(choisi ? .sombre : .claire))
+            .accessibilityAddTraits(choisi ? .isSelected : [])
+    }
+
+    /// Enregistre « Toi » et « Ta façon d'écrire » (`enregistrer-reglages`, avec `activite`), puis passe à Claude.
+    private func enregistrerToi() {
+        guard toi.complet, !enregistrementToi else { return }
+        enregistrementToi = true
+        etat.erreur = nil
+        let t = toi.nettoye
+        Task {
+            if etat.reglages == nil { await etat.chargerReglages() }
+            guard var r = etat.reglages else {
+                enregistrementToi = false
+                return
+            }
+            r.nom = t.nom
+            r.compte_instagram = t.compte
+            r.activite = t.activite
+            if !t.localisation.isEmpty { r.localisation = t.localisation }
+            r.voix = t.voix
+            r.langue = t.langue
+            if !t.approche.isEmpty { r.approche = t.approche }
+            let ok = await etat.envoyer(r, action: "enregistrer-reglages")
+            enregistrementToi = false
+            guard ok else { return }
+            etat.message = nil
+            await etat.chargerReglages()
+            aller(Pg.claude)
+        }
+    }
+
+    // MARK: Charte adaptée à l'activité
+
+    private static let cleCharte = "onboarding.charteAdapteePour"
+
+    /// Hors mariage, Claude adapte la charte à l'activité (tâche moteur `charte`), en arrière-plan, une fois par
+    /// activité : dès que Claude est connecté, sinon à la page « Tout est prêt ». Son travail se voit sur l'accueil.
+    private func adapterCharteSiBesoin() {
+        let activite = toi.activite.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !activite.isEmpty, !BrouillonToi.estMariage(activite), etat.studioInstalle, etat.claudePret,
+              !etat.claudeTravaille, !etat.lancementEnCours,
+              UserDefaults.standard.string(forKey: Self.cleCharte) != activite else { return }
+        UserDefaults.standard.set(activite, forKey: Self.cleCharte)
+        Task {
+            if await etat.lancerClaude(.charte) {
+                charteLancee = true
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.cleCharte)
+            }
+        }
+    }
+
+    private var charteEnCours: Bool {
+        if let e = etat.execution, e.tache == "charte" { return e.enCours }
+        return charteLancee
+    }
+
+    // MARK: Studio introuvable
+
+    @ViewBuilder private func pageStudio(compacte: Bool) -> some View {
+        if etat.installeurEmbarque != nil {
+            PageOnboarding(etape: Pg.toi, total: total,
+                           titre: etat.creationStudioEnCours ? "Je prépare ton studio…" : "Créons ton studio",
+                           texte: etat.creationStudioEnCours
+                               ? "Un instant : je range tout dans le dossier « Studio-Instagram » de ton Mac."
+                               : "Ton studio, c'est un dossier « Studio-Instagram » sur ce Mac : tes réglages, tes photos analysées et tes posts y vivront. Je le crée pour toi.",
+                           retour: { aller(Pg.bonjour) }, fond: false) {
+                Illustration(etat.creationStudioEnCours ? .attente : .bienvenue, taille: compacte ? 170 : 230)
+            } action: {
+                VStack(spacing: 12) {
+                    Button { Task { await etat.creerStudio() } } label: {
+                        Label(etat.creationStudioEnCours ? "Création…" : "Créer mon studio", systemImage: "sparkles")
+                    }
+                    .buttonStyle(.principal)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(etat.creationStudioEnCours)
+                    if !etat.creationStudioEnCours {
+                        Button("J'ai déjà un studio…") { etat.choisirDossier() }
+                            .buttonStyle(.discret)
+                    }
+                }
+            }
+        } else {
+            PageOnboarding(etape: Pg.toi, total: total, titre: "Où est ton studio ?",
+                           texte: "Je ne trouve pas le dossier du studio sur ce Mac. Montre-le-moi : c'est celui qui a été créé à l'installation.",
+                           retour: { aller(Pg.bonjour) }, fond: false) {
+                Illustration(.erreur, taille: compacte ? 170 : 230)
+            } action: {
+                Button { etat.choisirDossier() } label: { Label("Choisir le dossier…", systemImage: "folder") }
+                    .buttonStyle(.principal)
+                    .keyboardShortcut(.defaultAction)
+            }
         }
     }
 
@@ -222,14 +413,14 @@ struct VueBienvenue: View {
 
     private func pageClaude(compacte: Bool) -> some View {
         let phase = PhaseClaude(etat)
-        return PageOnboarding(etape: 1, total: total, titre: phase.titre, texte: phase.texte(etat),
-                              retour: { aller(0) }, fond: false) {
+        return PageOnboarding(etape: Pg.claude, total: total, titre: phase.titre, texte: phase.texte(etat),
+                              retour: { aller(Pg.ecriture) }, fond: false) {
             Illustration(phase == .attente ? .attente : .claude, taille: compacte ? 150 : 210)
         } contenu: {
             // Les erreurs passent par le bandeau de la coque pendant l'onboarding.
             ZoneClaude(phase: phase, code: $code, erreursEnLigne: false)
         } action: {
-            ActionClaude(phase: phase, code: $code, libelleContinuer: "Continuer", continuer: { aller(2) })
+            ActionClaude(phase: phase, code: $code, libelleContinuer: "Continuer", continuer: { aller(Pg.instagram) })
         }
     }
 
@@ -250,9 +441,9 @@ struct VueBienvenue: View {
     }
 
     private func pageInstaRelie(compacte: Bool) -> some View {
-        PageOnboarding(etape: 2, total: total, titre: "Instagram est relié.",
+        PageOnboarding(etape: Pg.instagram, total: total, titre: "Instagram est relié.",
                        texte: (etat.instagram?.libelle ?? "Connecté") + ". Le studio publiera seulement ce que tu as validé.",
-                       retour: { aller(1) }, fond: false) {
+                       retour: { aller(Pg.claude) }, fond: false) {
             Illustration(.instagram, taille: compacte ? 170 : 230)
         } contenu: {
             Button("Relier un autre compte") {
@@ -262,7 +453,7 @@ struct VueBienvenue: View {
             }
             .buttonStyle(.discret)
         } action: {
-            Button { aller(3) } label: { Label("Continuer", systemImage: "arrow.right") }
+            Button { aller(Pg.rythme) } label: { Label("Continuer", systemImage: "arrow.right") }
                 .buttonStyle(.principal)
                 .keyboardShortcut(.defaultAction)
         }
@@ -270,11 +461,11 @@ struct VueBienvenue: View {
 
     private func pageInstaChoix(compacte: Bool) -> some View {
         let arefaire = etat.instagram.map { !$0.connecte && !$0.absent && !$0.etat.isEmpty } ?? false
-        return PageOnboarding(etape: 2, total: total, titre: "Et ton compte Instagram.",
+        return PageOnboarding(etape: Pg.instagram, total: total, titre: "Et ton compte Instagram.",
                               texte: arefaire
                                 ? "La connexion précédente ne marche plus. Relie de nouveau ton compte pour que le studio publie à ta place."
                                 : "Relie ton compte pour que le studio publie à ta place, seulement ce que tu as validé.",
-                              retour: { aller(1) }, fond: false) {
+                              retour: { aller(Pg.claude) }, fond: false) {
             Illustration(.instagram, taille: compacte ? 80 : 120)
         } contenu: {
             VStack(spacing: 8) {
@@ -297,7 +488,7 @@ struct VueBienvenue: View {
             }
         } action: {
             Button {
-                if choixInsta == .plusTard { aller(3) } else { allerInsta(.guide) }
+                if choixInsta == .plusTard { aller(Pg.rythme) } else { allerInsta(.guide) }
             } label: {
                 Label(choixInsta == .plusTard ? "Préparer sans publier" : "Continuer", systemImage: "arrow.right")
             }
@@ -307,7 +498,7 @@ struct VueBienvenue: View {
     }
 
     private func pageInstaGuide(compacte: Bool) -> some View {
-        PageOnboarding(etape: 2, total: total, titre: "Crée ton app chez Meta.",
+        PageOnboarding(etape: Pg.instagram, total: total, titre: "Crée ton app chez Meta.",
                        texte: "Ouvre le site de Meta à côté de cette fenêtre. Je t'attends ici.",
                        retour: { allerInsta(.choix) }, fond: false) {
             Illustration(.instagram, taille: compacte ? 60 : 90)
@@ -329,7 +520,7 @@ struct VueBienvenue: View {
     }
 
     private func pageInstaIdentifiants(compacte: Bool) -> some View {
-        PageOnboarding(etape: 2, total: total, titre: "Colle tes codes.",
+        PageOnboarding(etape: Pg.instagram, total: total, titre: "Colle tes codes.",
                        texte: "Ils restent sur ce Mac, dans ton studio. Ils ne s'affichent jamais, même ici.",
                        retour: { allerInsta(.guide) }, fond: false) {
             Illustration(.instagram, taille: compacte ? 70 : 110)
@@ -375,7 +566,7 @@ struct VueBienvenue: View {
             refaireInsta = false
             AccessibilityNotification.Announcement("Instagram est relié.").post()
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            if etape == 2 && etat.instagram?.connecte == true { aller(3) }
+            if etape == Pg.instagram && etat.instagram?.connecte == true { aller(Pg.rythme) }
         }
     }
 
@@ -410,9 +601,9 @@ struct VueBienvenue: View {
     }
 
     private func pageRythme(compacte: Bool) -> some View {
-        PageOnboarding(etape: 3, total: total, titre: "Ton rythme.",
+        PageOnboarding(etape: Pg.rythme, total: total, titre: "Ton rythme.",
                        texte: "Claude prépare les idées le matin, tu décides, le studio publie.",
-                       retour: { aller(2) }, fond: false) {
+                       retour: { aller(Pg.instagram) }, fond: false) {
             // Page la plus dense de l'onboarding : petite illustration, pour que « Activer » reste visible à 860 pt.
             Illustration(.rythme, taille: compacte ? 60 : 84)
         } contenu: {
@@ -425,7 +616,7 @@ struct VueBienvenue: View {
                 // sinon, chargés ici.
                 .onAppear {
                     lireRythme()
-                    if !rythmeLu { arrivee(3) }
+                    if !rythmeLu { arrivee(Pg.rythme) }
                 }
             } else if rythmeFait {
                 tachesActivees
@@ -449,7 +640,7 @@ struct VueBienvenue: View {
             } else if !rythmeLu && etat.reglages == nil && etat.erreur != nil {
                 Button {
                     etat.erreur = nil
-                    arrivee(3)
+                    arrivee(Pg.rythme)
                 } label: { Label("Réessayer", systemImage: "arrow.triangle.2.circlepath") }
                 .buttonStyle(.principal)
                 .keyboardShortcut(.defaultAction)
@@ -598,7 +789,7 @@ struct VueBienvenue: View {
                 AccessibilityNotification.Announcement("Tâches automatiques activées.").post()
                 try? await Task.sleep(nanoseconds: 1_800_000_000)
             }
-            if etape == 3 { aller(4) }
+            if etape == Pg.rythme { aller(Pg.pret) }
         }
     }
 
@@ -615,8 +806,8 @@ struct VueBienvenue: View {
     }
 
     private func pagePret(compacte: Bool) -> some View {
-        PageOnboarding(etape: 4, total: total, titre: "Tout est prêt !", texte: textePret,
-                       retour: { aller(3) }, fond: false) {
+        PageOnboarding(etape: Pg.pret, total: total, titre: "Tout est prêt !", texte: textePret,
+                       retour: { aller(Pg.rythme) }, fond: false) {
             Illustration(.pret, taille: compacte ? 200 : 280)
         } action: {
             VStack(spacing: 10) {
@@ -633,7 +824,16 @@ struct VueBienvenue: View {
                 }
                 .buttonStyle(BoutonDiscret(fleche: true))
                 .disabled(lancement || etat.claudeTravaille || etat.lancementEnCours)
+                if charteEnCours {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Claude adapte ta charte à ton activité").typo(.legende)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .transition(j.transition(.apparition))
+                }
             }
+            .animation(j.anim(.doux), value: charteEnCours)
         }
     }
 
@@ -1156,5 +1356,113 @@ private struct LigneErreur: View {
         .padding(12)
         .background(RoundedRectangle(cornerRadius: j.rayons.champ, style: .continuous).fill(j.fondAlerte))
         .onAppear { AccessibilityNotification.Announcement(texte).post() }
+    }
+}
+
+// MARK: - Pages, compte
+
+/// Numéros des pages de l'onboarding (points de progression).
+private enum Pg {
+    static let bonjour = 0, toi = 1, ecriture = 2, claude = 3, instagram = 4, rythme = 5, pret = 6
+}
+
+/// Ce qu'elle (ou il) répond aux pages « Toi » et « Ta façon d'écrire ».
+private struct BrouillonToi: Equatable {
+    var nom = ""
+    var compte = ""
+    var activite = ""
+    var localisation = ""
+    /// je | nous
+    var voix = ""
+    /// francais | anglais | bilingue
+    var langue = ""
+    var approche = ""
+
+    /// « photographe de mariage » → « Mariage » (libellé court d'une pilule).
+    static func titreActivite(_ valeur: String) -> String {
+        var t = valeur
+        for prefixe in ["photographe de ", "photographe d'", "photographe "] where t.hasPrefix(prefixe) {
+            t = String(t.dropFirst(prefixe.count))
+            break
+        }
+        return t.prefix(1).uppercased() + t.dropFirst()
+    }
+
+    init() {}
+
+    init(_ c: Reglages) {
+        nom = Self.propre(c.nom)
+        compte = Self.nettoyerCompte(Self.propre(c.compte_instagram))
+        activite = Self.propre(c.activite)
+        localisation = Self.propre(c.localisation)
+        let v = Self.propre(c.voix).lowercased()
+        voix = v == "je" || v == "nous" ? v : ""
+        let l = Self.propre(c.langue).lowercased()
+        langue = l.contains("bilingue") ? "bilingue" : (l.contains("angl") || l.contains("english")) ? "anglais"
+            : l.contains("fran") ? "francais" : ""
+        approche = Self.propre(c.approche)
+    }
+
+    /// Un champ du modèle encore à remplir (« [À COMPLÉTER : …] », `champACompleter`) compte comme vide.
+    static func propre(_ s: String?) -> String {
+        champACompleter(s) ? "" : (s ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// « @compte », « instagram.com/compte/ » ou « compte » → « compte ».
+    static func nettoyerCompte(_ s: String) -> String {
+        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let r = t.range(of: "instagram.com/", options: .caseInsensitive) {
+            t = String(t[r.upperBound...]).components(separatedBy: CharacterSet(charactersIn: "/?#")).first ?? ""
+        }
+        while t.hasPrefix("@") { t.removeFirst() }
+        return t.filter { !$0.isWhitespace }
+    }
+
+    static func estMariage(_ activite: String) -> Bool {
+        let a = activite.lowercased()
+        return a.contains("mariage") || a.contains("wedding")
+    }
+
+    private static func rempli(_ s: String) -> Bool { !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    /// Page « Toi » : nom, compte et activité.
+    var identiteComplete: Bool { Self.rempli(nom) && Self.rempli(compte) && Self.rempli(activite) }
+    /// Les deux pages : plus la voix et la langue.
+    var complet: Bool { identiteComplete && !voix.isEmpty && !langue.isEmpty }
+
+    var nettoye: BrouillonToi {
+        var t = self
+        let net = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines) }
+        t.nom = net(nom)
+        t.compte = Self.nettoyerCompte(compte)
+        t.activite = net(activite)
+        t.localisation = net(localisation)
+        t.approche = net(approche)
+        return t
+    }
+}
+
+/// Une question de l'onboarding : libellé (et « facultatif »), puis la réponse.
+private struct Question<Reponse: View>: View {
+    let titre: String
+    let facultatif: Bool
+    let reponse: Reponse
+
+    init(_ titre: String, facultatif: Bool = false, @ViewBuilder reponse: () -> Reponse) {
+        self.titre = titre
+        self.facultatif = facultatif
+        self.reponse = reponse()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(titre).typo(.corpsFort)
+                if facultatif { Text("facultatif").typo(.legende) }
+            }
+            .accessibilityElement(children: .combine)
+            reponse
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
