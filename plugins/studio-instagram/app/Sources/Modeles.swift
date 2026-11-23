@@ -65,6 +65,10 @@ struct Idee: Decodable, Identifiable {
     let pourquoi: String?
     let couverture: String?
     let vignettes: [String]?
+    /// L'idée en une phrase, pour la carte (absent avec un moteur ancien : `pitch` sert alors).
+    let brief: String?
+
+    var briefAffiche: String { brief?.nonVide ?? pitch?.nonVide ?? titre ?? "" }
 }
 
 struct Post: Decodable {
@@ -1450,4 +1454,51 @@ struct ListeSouple<Element: Decodable>: Decodable {
 
 private struct ElementIgnore: Decodable {
     init(from decoder: Decoder) throws {}
+}
+
+// MARK: - Photos d'un post et export (./studio app ajouter-source, exporter)
+
+/// Corps de `ajouter-source` : des fichiers, un dossier du Mac ou un lien Pic-Time.
+struct SourcePhotos: Encodable {
+    /// fichiers | dossier | pictime
+    var type: String
+    var fichiers: [String]? = nil
+    var chemin: String? = nil
+    var url: String? = nil
+    var nom: String? = nil
+}
+
+/// `ajouter-source` → ajoutee | refuse | echec
+struct ReponseSource: Decodable {
+    var etat = ""
+    /// Identifiant de la série créée (« post-AAAAMMJJ-HHMMSS »), à passer à `lancerClaude(.creation, serie:)`.
+    var id: String?
+    var photos: Int?
+    var erreurs: [String] = []
+}
+
+extension ReponseSource {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CleJSON.self)
+        etat = c.texte(CleJSON("etat")) ?? ""
+        id = c.texte(CleJSON("id"))?.nonVide
+        photos = c.entier(CleJSON("photos"))
+        erreurs = c.souple([String].self, CleJSON("erreurs")) ?? []
+    }
+}
+
+/// `exporter` → exporte
+struct ReponseExport: Decodable {
+    var etat = ""
+    var dossier: String?
+    var fichiers: [String] = []
+}
+
+extension ReponseExport {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CleJSON.self)
+        etat = c.texte(CleJSON("etat")) ?? ""
+        dossier = c.texte(CleJSON("dossier"))?.nonVide
+        fichiers = c.souple([String].self, CleJSON("fichiers")) ?? []
+    }
 }

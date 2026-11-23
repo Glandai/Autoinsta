@@ -140,6 +140,9 @@ private struct CarteGalerie: View {
         Carte(style: .cliquable) {
             VStack(alignment: .leading, spacing: j.esp.blocs) {
                 MosaiqueGalerie(chemins: vignettes, symbole: GalerieTexte.symboleType(galerie.type))
+                    .contentShape(Rectangle())
+                    .onTapGesture { Task { await etat.ouvrirPostDeSerie(galerie.id) } }
+                    .help("Voir l'aperçu du post fait avec ces photos")
                 enTete
                 progression
                 pastilles
@@ -213,24 +216,11 @@ private struct CarteGalerie: View {
             if resteALire {
                 Pastille("À analyser", symbole: "exclamationmark.circle.fill", ton: .aToi)
             }
-            if let f = galerie.fortes, f > 0 {
-                Pastille(f == 1 ? "1 photo forte" : "\(f) photos fortes", symbole: "star.fill", ton: .douce)
-            }
         }
     }
 
     private var actions: some View {
         HStack(spacing: 8) {
-            Button {
-                Task { await etat.lancerClaude(.galerie, serie: galerie.id) }
-            } label: {
-                Label("Analyser avec Claude", systemImage: "sparkles")
-            }
-            .buttonStyle(.pilule(.claire, taille: .petite, enCours: etat.lancementEnCours))
-            .fixedSize()
-            .disabled(etat.lancementEnCours || etat.claudeTravaille || photos == 0)
-            .help(photos == 0 ? "Relis d'abord les photos de la galerie." : "Claude regarde les photos et repère les plus fortes.")
-
             Button(action: modifier) { Label("Modifier", systemImage: "pencil.line") }
                 .buttonStyle(.discret)
                 .fixedSize()
@@ -244,10 +234,6 @@ private struct CarteGalerie: View {
             Label("Relire les photos", systemImage: "arrow.triangle.2.circlepath")
         }
         .disabled(etat.occupe)
-        Button { Task { await etat.lancerClaude(.galerie, serie: galerie.id) } } label: {
-            Label("Analyser avec Claude", systemImage: "sparkles")
-        }
-        .disabled(etat.lancementEnCours || etat.claudeTravaille || photos == 0)
         Divider()
         Button(role: .destructive) { retirer() } label: { Label("Retirer du studio…", systemImage: "trash") }
     }

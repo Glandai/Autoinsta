@@ -248,6 +248,7 @@ Mode "idees" → `jours/AAAA-MM-JJ/idees.json` :
   "idees": [
     {
       "titre": "quelques mots",
+      "brief": "une seule phrase courte (12 mots au plus), affichée sur la carte de l'idée",
       "pitch": "une ou deux phrases concrètes",
       "format": "carrousel | image | reel",
       "nb_medias": 8,

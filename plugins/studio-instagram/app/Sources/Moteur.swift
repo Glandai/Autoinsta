@@ -175,6 +175,9 @@ final class EtatApp: ObservableObject {
     /// Augmente quand les images du post sont refaites (mêmes chemins, nouveau contenu) : `.id(etat.versionImages)`
     /// sur une image locale force sa relecture.
     @Published var versionImages = 0
+    /// `ajouterSource` : copie et lecture des photos (quelques secondes, plus pour un lien Pic-Time).
+    @Published var ajoutSourceEnCours = false
+    @Published var exportEnCours = false
 
     private var derniereDemande: String?
     private var signatures: [String: Date] = [:]
@@ -193,6 +196,8 @@ final class EtatApp: ObservableObject {
     private var jourARecharger = false
     private var listeARecharger = false
     private var lectureExecutionEnCours = false
+    /// Progression déjà montrée par exécution : elle ne recule jamais.
+    private var progressions: [String: Double] = [:]
 
     init() {
         dossier = EtatApp.trouverDossier()
@@ -251,6 +256,43 @@ final class EtatApp: ObservableObject {
             let data = try? JSONSerialization.data(withJSONObject: ["dossier": url.path], options: [.prettyPrinted])
             try? data?.write(to: support.appendingPathComponent("reglages.json"))
             changerDossier(url)
+        }
+    }
+
+    // MARK: Archives des posts (galerie) et navigation dans le flux de l'accueil
+
+    /// Étape du flux de l'accueil à montrer (0 idées … 4 finaliser), demandée depuis un autre écran.
+    @Published var etapeAccueilDemandee: Int? = nil
+
+    private struct ReponseArchive: Decodable, Sendable { let etat: String?; let id: String? }
+    private struct ReponseRouvrir: Decodable, Sendable { let etat: String?; let jour: String? }
+
+    /// Range le post du jour affiché dans la galerie : l'accueil repart sur un nouveau post.
+    func archiverPost() async -> Bool {
+        do {
+            _ = try await appeler(ReponseArchive.self, ["app", "archiver", jour])
+            message = "Le post est rangé dans la galerie."
+            await chargerJour()
+            await chargerGaleries()
+            return true
+        } catch {
+            erreur = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Ouvre le post fait avec les photos de cette série (aperçu, ou une autre étape) dans l'accueil.
+    func ouvrirPostDeSerie(_ serie: String, etape: Int = 3) async {
+        do {
+            let r = try await appeler(ReponseRouvrir.self, ["app", "rouvrir-serie", serie])
+            guard let j = r.jour else {
+                message = "Aucun post n'a encore été fait avec ces photos."
+                return
+            }
+            etapeAccueilDemandee = etape
+            montrer(.aujourdhui, jour: j)
+        } catch {
+            erreur = error.localizedDescription
         }
     }
 
@@ -981,6 +1023,8 @@ final class EtatApp: ObservableObject {
             return
         }
         if n.enCours { executionsSuivies.insert(n.id) }
+        let p = EtatApp.progression(de: n)
+        if p > (progressions[n.id] ?? 0) { progressions[n.id] = p }
         if execution != n { execution = n }
         if n.terminee, executionsSuivies.contains(n.id), !executionsFinies.contains(n.id) {
             executionsFinies.insert(n.id)
@@ -1282,6 +1326,116 @@ final class EtatApp: ObservableObject {
             throw ErreurMoteur(message: "Impossible de préparer l'envoi des identifiants.")
         }
         return url
+    }
+
+    // MARK: Flux de l'accueil : photos, progression, export
+
+    /// Avancement de l'exécution en cours ou de la dernière (0 à 1) pour la barre de chargement : étapes faites
+    /// sur étapes attendues pour cette tâche, relevé par les étapes repères d'une création (mise en page,
+    /// contrôle, aperçu). Ne recule jamais ; 1 une fois terminée avec succès ; 0 sans exécution.
+    var progressionCreation: Double {
+        guard let e = execution, !e.aucune else { return 0 }
+        if e.reussie { return 1 }
+        return progressions[e.id] ?? EtatApp.progression(de: e)
+    }
+
+    /// Étapes qu'une tâche montre d'habitude (estimation pour la barre de chargement).
+    private static func etapesAttendues(_ t: TacheClaude?) -> Double {
+        switch t {
+        case .creation?: return 11
+        case .retouche?: return 6
+        case .matin?: return 10
+        case .idees?: return 7
+        case .galerie?: return 8
+        case .bilan?: return 7
+        case .charte?: return 4
+        default: return 5
+        }
+    }
+
+    /// Étapes repères d'une création ou d'une retouche (début du texte du moteur → avancement minimal).
+    private static let reperesCreation: [(String, Double)] = [
+        ("Je lis la galerie", 0.08), ("Je prépare les planches contact", 0.15),
+        ("J'enregistre mon analyse des photos", 0.3), ("Je cherche les meilleures photos", 0.35),
+        ("J'écris le post", 0.55), ("Je mets les images en page", 0.7),
+        ("Je vérifie le post", 0.8), ("Je prépare l'aperçu", 0.9), ("J'ouvre le bon écran", 0.95),
+    ]
+
+    private static func progression(de e: ExecutionClaude) -> Double {
+        if e.reussie { return 1 }
+        if e.etapes.isEmpty { return e.enCours ? 0.03 : 0 }
+        let faites = Double(e.etapes.filter(\.fait).count) + (e.etapes.contains { !$0.fait } ? 0.5 : 0)
+        let attendues = max(etapesAttendues(e.tacheClaude), Double(e.etapes.count) + 1.5)
+        var p = 0.04 + 0.9 * faites / attendues
+        if e.tacheClaude == .creation || e.tacheClaude == .retouche {
+            for etape in e.etapes {
+                if let repere = reperesCreation.first(where: { etape.texte.hasPrefix($0.0) }) { p = max(p, repere.1) }
+            }
+        }
+        return min(p, 0.96)
+    }
+
+    /// Photos choisies sur le Mac (copiées dans le studio, jamais modifiées). Rend l'identifiant de la série
+    /// créée, à passer à `lancerClaude(.creation, serie:)`, ou nil (avec `erreur`).
+    func ajouterSource(fichiers: [URL], nom: String? = nil) async -> String? {
+        await ajouterSource(SourcePhotos(type: "fichiers", fichiers: fichiers.map(\.path), nom: nom?.nonVide))
+    }
+
+    /// Un dossier de photos du Mac (lu sur place).
+    func ajouterSource(dossier: URL, nom: String? = nil) async -> String? {
+        await ajouterSource(SourcePhotos(type: "dossier", chemin: dossier.path, nom: nom?.nonVide))
+    }
+
+    /// Un lien de partage Pic-Time (https://…pic-time.com/…).
+    func ajouterSource(pictime lien: String, nom: String? = nil) async -> String? {
+        await ajouterSource(SourcePhotos(type: "pictime", url: lien.trimmingCharacters(in: .whitespacesAndNewlines),
+                                         nom: nom?.nonVide))
+    }
+
+    private func ajouterSource(_ source: SourcePhotos) async -> String? {
+        ajoutSourceEnCours = true
+        defer { ajoutSourceEnCours = false }
+        do {
+            let url = try fichierTemporaire(try JSONEncoder().encode(source), extension: "json")
+            defer { try? FileManager.default.removeItem(at: url) }
+            let r = try await appeler(ReponseSource.self, ["app", "ajouter-source", url.path])
+            if r.etat == "ajoutee", let id = r.id {
+                if let n = r.photos { message = n == 1 ? "1 photo prête." : "\(n) photos prêtes." }
+                Task { await chargerGaleries() }
+                return id
+            }
+            erreur = r.erreurs.isEmpty ? "Ces photos n'ont pas pu être ajoutées." : r.erreurs.joined(separator: "\n")
+        } catch {
+            erreur = error.localizedDescription
+        }
+        return nil
+    }
+
+    /// Copie le post prêt (images ou Reel, légende, textes alternatifs) dans
+    /// `~/Downloads/Studio Instagram/<jour> <titre>` et ouvre ce dossier dans le Finder. Rend son adresse, ou nil.
+    func exporter(jour j: String? = nil) async -> URL? {
+        let leJour = j ?? jour
+        let titre = (leJour == jour ? vue?.post?.titre : nil)?.nonVide ?? "post"
+        let nom = String("\(leJour) \(titre)".map { "/:".contains($0) ? "-" : $0 }.prefix(80))
+        let cible = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads/Studio Instagram", isDirectory: true)
+            .appendingPathComponent(nom, isDirectory: true)
+        exportEnCours = true
+        defer { exportEnCours = false }
+        do {
+            let r = try await appeler(ReponseExport.self, ["app", "exporter", leJour, cible.path])
+            guard r.etat == "exporte" else {
+                erreur = "Les fichiers n'ont pas pu être préparés."
+                return nil
+            }
+            let dossierExporte = r.dossier.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? cible
+            NSWorkspace.shared.open(dossierExporte)
+            message = "Fichiers prêts dans Téléchargements › Studio Instagram."
+            return dossierExporte
+        } catch {
+            erreur = error.localizedDescription
+            return nil
+        }
     }
 
     // MARK: Claude (1.x)

@@ -230,6 +230,7 @@ def vue_jour(jour: str = None) -> dict:
         serie = idee.get("serie")
         photos = [v for v in (idee.get("photos") or []) if v != idee.get("couverture")][:3]
         idees.append({
+            "brief": _brief(idee.get("brief") or idee.get("pitch") or idee.get("titre") or ""),
             **{k: idee.get(k) for k in ("titre", "pitch", "format", "nb_medias", "duree_s", "pilier", "serie", "type",
                                         "longueur_legende", "musique", "pourquoi")},
             "numero": n,
@@ -690,6 +691,119 @@ def enregistrer_instagram(fichier: str) -> dict:
     if r.get("etat") != "valide":
         return {"etat": "echec", "erreurs": [r.get("erreur") or "Instagram n'a pas accepté ces identifiants."]}
     return {"etat": "connecte", "erreurs": [], "compte": r.get("compte"), "abonnes": r.get("abonnes")}
+
+
+# =========================================================================== flux de l'accueil : source de photos, export
+
+def _brief(texte: str) -> str:
+    """Le brief d'une idée en une phrase (la première du pitch)."""
+    t = " ".join(str(texte or "").split())
+    m = re.match(r"(.+?[.!?…])(\s|$)", t)
+    return (m.group(1) if m else t)[:220]
+
+
+EXTENSIONS_PHOTOS = (".jpg", ".jpeg", ".png", ".heic", ".tif", ".tiff", ".webp")
+
+
+def ajouter_source(fichier: str) -> dict:
+    """Photos choisies pour UN post depuis l'accueil : des fichiers, un dossier ou un lien Pic-Time.
+    Crée une série (galerie) dédiée, l'indexe et rend son identifiant, à passer à la création."""
+    import shutil
+    from . import sources
+    n = _lire_json_fichier(fichier)
+    t = n.get("type")
+    ident = "post-" + config.maintenant().strftime("%Y%m%d-%H%M%S")
+    titre = str(n.get("nom") or "").strip()
+    if t == "pictime":
+        url = str(n.get("url") or "").strip()
+        if not url.startswith("https://") or "pic-time" not in url:
+            return {"etat": "refuse", "erreurs": ["Colle le lien de partage Pic-Time complet (https://…pic-time.com/…)."]}
+        source = {"type": "pictime", "url": url}
+    elif t == "dossier":
+        chemin = str(n.get("chemin") or "").strip()
+        if not chemin or not Path(chemin).expanduser().is_dir():
+            return {"etat": "refuse", "erreurs": ["Ce dossier est introuvable."]}
+        source = {"type": "dossier", "chemin": chemin}
+    elif t == "fichiers":
+        liste = [Path(f).expanduser() for f in (n.get("fichiers") or [])]
+        liste = [f for f in liste if f.is_file() and f.suffix.lower() in EXTENSIONS_PHOTOS]
+        if not liste:
+            return {"etat": "refuse", "erreurs": ["Choisis au moins une photo (JPEG, PNG, HEIC, TIFF ou WebP)."]}
+        cible = config.chemin("sources", ident)
+        cible.mkdir(parents=True, exist_ok=True)
+        for f in liste:                           # copie : les originaux ne sont jamais touchés
+            shutil.copy2(f, cible / f.name)
+        source = {"type": "dossier", "chemin": str(cible)}
+    else:
+        return {"etat": "refuse", "erreurs": ["Choisis des photos, un dossier ou un lien Pic-Time."]}
+    serie = {"id": ident, "type": n.get("type_serie") or "shooting", "lieu": None, "date": None,
+             "maries": {"prenoms": None, "prenoms_publiables": False},
+             "notes": titre or "Photos choisies pour un post depuis l'accueil de l'app.",
+             "prestataires": [], "location_id": None, "source": source, "exports_hd": None,
+             "consignes": "", "statut": "active"}
+    _ecrire_series([s for s in config.series() if s.get("id") != ident] + [serie])
+    try:
+        r = sources.indexer(ident)
+    except ErreurStudio as e:
+        _ecrire_series([s for s in config.series() if s.get("id") != ident])
+        return {"etat": "echec", "erreurs": [str(e)]}
+    return {"etat": "ajoutee", "id": ident, "photos": r.get("photos", 0), "erreurs": []}
+
+
+def exporter(jour: str, dossier: str = None) -> dict:
+    """Le post prêt, à télécharger : images mises en page (ou vidéo du Reel) et légende complète."""
+    import shutil
+    d = config.dossier_jour(jour)
+    post = config.lire_json(d / "post.json")
+    if not post:
+        raise ErreurStudio("Le post de ce jour n'est pas encore prêt.")
+    cible = Path(dossier).expanduser() if dossier else \
+        pathlib.Path.home() / "Downloads" / "Studio Instagram" / (jour + " " + str(post.get("titre") or "post"))[:80]
+    cible.mkdir(parents=True, exist_ok=True)
+    fichiers = []
+    rendu = d / "rendu"
+    for f in sorted(rendu.glob("[0-9][0-9].jpg")) + ([rendu / "reel.mp4"] if (rendu / "reel.mp4").exists() else []):
+        shutil.copy2(f, cible / f.name)
+        fichiers.append(f.name)
+    legende = str(post.get("legende") or "").strip()
+    alt = "\n".join(f"{i:02d}. {m.get('texte_alternatif') or ''}" for i, m in
+                     enumerate(sorted(post.get("medias") or [], key=lambda m: m.get("ordre", 0)), 1))
+    (cible / "legende.txt").write_text(legende + "\n", encoding="utf-8")
+    (cible / "textes-alternatifs.txt").write_text(alt + "\n", encoding="utf-8")
+    fichiers += ["legende.txt", "textes-alternatifs.txt"]
+    return {"etat": "exporte", "dossier": str(cible), "fichiers": fichiers}
+
+
+# =========================================================================== archives des posts
+
+def archiver(jour: str) -> dict:
+    """Range le post du jour dans les archives (la galerie) : l'accueil repart sur un nouveau post."""
+    import shutil
+    d = config.chemin("jours", jour)
+    if not (d / "post.json").exists() and not (d / "idees.json").exists():
+        raise ErreurStudio("Rien à archiver pour ce jour.")
+    ident = jour + "-" + config.maintenant().strftime("%H%M%S")
+    cible = config.chemin("archives", ident)
+    cible.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(d), str(cible))
+    return {"etat": "archive", "id": ident}
+
+
+def rouvrir_serie(serie: str) -> dict:
+    """Le post fait avec les photos de cette série, remis dans son jour pour l'aperçu ou la modification."""
+    import shutil
+    for d in sorted(config.chemin("jours").glob("*/post.json")):
+        if (config.lire_json(d, {}) or {}).get("serie") == serie:
+            return {"etat": "ouvert", "jour": d.parent.name}
+    archives = sorted(config.chemin("archives").glob("*/post.json"), reverse=True)
+    a = next((d.parent for d in archives if (config.lire_json(d, {}) or {}).get("serie") == serie), None)
+    if a is None:
+        return {"etat": "aucun", "jour": None}
+    jour = a.name[:10]
+    if config.chemin("jours", jour).exists():
+        archiver(jour)                            # le post en cours ce jour-là va d'abord aux archives
+    shutil.move(str(a), str(config.chemin("jours", jour)))
+    return {"etat": "ouvert", "jour": jour}
 
 
 # =========================================================================== galeries

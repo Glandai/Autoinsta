@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 // La coque de l'app (DESIGN.md §4.1) : fenêtre sur le fond d'ambiance, barre d'icônes à gauche, page de verre
-// avec son en-tête, routage animé, onboarding plein écran, assistant de création plein écran, bandeau,
+// avec son en-tête, routage animé (Accueil = flux unique `VueAccueil`), onboarding plein écran, bandeau,
 // panneau « Demander à Claude » (⌘K), activité de Claude en direct, menus et pastille du Dock.
 
 @main
@@ -89,6 +89,15 @@ final class CoqueStudio: ObservableObject {
         Task { await lancer(consigne, etat: etat) }
     }
 
+    /// « Nouveau post » (⌘N) : ramène au temps 1 du flux de l'Accueil (les idées). `VueAccueil` peut observer
+    /// `demandeNouveauPost` (`.onChange(of: coque.demandeNouveauPost)`) pour repartir de zéro.
+    @Published private(set) var demandeNouveauPost = 0
+
+    func nouveauPost(_ etat: EtatApp) {
+        demandeNouveauPost += 1
+        etat.montrer(.aujourdhui)
+    }
+
     func nouvelleConversation(_ etat: EtatApp) {
         messages = []
         fileAttente = []
@@ -147,14 +156,10 @@ struct VueRacine: View {
 
     /// Studio absent, Claude jamais prêt, ou onboarding jamais fini.
     private var montrerOnboarding: Bool { !etat.studioInstalle || !claudeDejaPret || !onboardingTermine }
-    private var ecranCourant: Ecran { etat.ecran ?? .aujourdhui }
-    private var assistant: Bool { !montrerOnboarding && ecranCourant == .creation }
-
     var body: some View {
         contenu
             .overlay { BandeauCoque(onboarding: montrerOnboarding) }
             .animation(j.anim(.page), value: montrerOnboarding)
-            .animation(j.anim(.page), value: assistant)
             .sheet(isPresented: $coque.feuilleConnexion) { feuille }
             .modifier(SuiviCoque(onboarding: montrerOnboarding, synchroniser: synchroniserClaude,
                                  dock: mettreAJourDock))
@@ -167,9 +172,6 @@ struct VueRacine: View {
             if montrerOnboarding {
                 VueBienvenue()
                     .transition(.opacity)
-            } else if assistant {
-                VueCreation()
-                    .transition(j.transition(.apparition))
             } else {
                 VueStudio()
                     .transition(.opacity)
@@ -285,6 +287,15 @@ private struct VueStudio: View {
 
     private var ecranCourant: Ecran { etat.ecran ?? .aujourdhui }
 
+    /// Accueil, création et idées sont le même flux : même identité, pour que passer de l'un à l'autre
+    /// (par exemple `ecran_suivant = creation` à la fin d'une génération) ne remette pas le flux à zéro.
+    private var identite: Ecran {
+        switch ecranCourant {
+        case .creation, .idees: return .aujourdhui
+        default: return ecranCourant
+        }
+    }
+
     /// L'icône allumée : celle de l'écran, ou de son parent (Idées, Aperçu → Accueil ; Charte, Règles → Réglages).
     private var selection: Binding<Ecran> {
         Binding(get: { BarreStudio.parent(ecranCourant) },
@@ -293,8 +304,8 @@ private struct VueStudio: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            BarreIcones(elements: BarreStudio.elements(etat.apparence), selection: selection,
-                        nouveau: { etat.montrer(.creation) }) {
+            // Plus de « + » séparé : l'Accueil EST la création d'un post (conception/flux-unique.md).
+            BarreIcones(elements: BarreStudio.elements(etat.apparence), selection: selection) {
                 PiedBarre()
             }
             .zIndex(1)
@@ -303,12 +314,12 @@ private struct VueStudio: View {
                     EnTetePage()
                     ZStack {
                         ecran
-                            .id(ecranCourant)
+                            .id(identite)
                             .transition(j.transition(.ecran))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
-                    .animation(j.anim(.page), value: ecranCourant)
+                    .animation(j.anim(.page), value: identite)
                 }
             }
             .padding(.vertical, 16)
@@ -323,9 +334,8 @@ private struct VueStudio: View {
 
     @ViewBuilder private var ecran: some View {
         switch ecranCourant {
-        case .aujourdhui: VueAujourdhui()
-        case .idees: VueIdees()
-        case .creation: VueAujourdhui()   // l'assistant s'affiche en plein écran (VueRacine)
+        // Accueil, création et idées : le même flux (idées → photos → génération → aperçu → finaliser).
+        case .aujourdhui, .creation, .idees: VueAccueil()
         case .apercu: VueApercu()
         case .galeries: VueGaleries()
         case .statistiques: VueStatistiques()
@@ -425,7 +435,6 @@ private struct EnTetePage: View {
                     .fixedSize()   // la capsule épouse son texte au lieu de s'étirer à 300 pt
                     .popover(isPresented: $activiteOuverte, arrowEdge: .bottom) { activite }
             }
-            SelecteurJour()
         }
         .frame(height: 64)
         .padding(.horizontal, j.esp.page * 0.6)
@@ -631,10 +640,7 @@ private struct BandeauCoque: View {
         .allowsHitTesting(courant != nil)
     }
 
-    /// Sur Aujourd'hui, le bandeau passe au-dessus de la barre « Demande à Claude ».
-    private var basBandeau: CGFloat {
-        !onboarding && (etat.ecran ?? .aujourdhui) == .aujourdhui ? 200 : 28
-    }
+    private var basBandeau: CGFloat { 28 }
 
     private var courant: MessageBandeau? {
         if !onboarding && !coque.feuilleConnexion {
@@ -680,7 +686,7 @@ struct CommandesStudio: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("Nouveau post") { etat.montrer(.creation) }
+            Button("Nouveau post") { coque.nouveauPost(etat) }
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(inactif)
         }
@@ -696,7 +702,7 @@ struct CommandesStudio: Commands {
             }
             Divider()
             // Hors de la barre, toujours accessibles au clavier et au menu.
-            ForEach([Ecran.idees, .apercu, .charte, .regles], id: \.self) { e in
+            ForEach([Ecran.apercu, .charte, .regles], id: \.self) { e in
                 Button(e.titre) { etat.montrer(e) }.disabled(inactif)
             }
             Divider()

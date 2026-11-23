@@ -180,6 +180,8 @@ L'app relit ce fichier dès qu'il change : une personnalisation faite par Claude
 | `instagram` | `InstagramEtat?` | connexion à Instagram (`chargerInstagram()`) ; nil tant qu'elle n'a pas été vérifiée |
 | `connexionInstagramEnCours` | `Bool` | identifiants Instagram en cours de vérification |
 | `modificationEnCours` | `Bool` | `modifierPost` : le moteur refait mise en page, contrôle et aperçu (quelques secondes) |
+| `progressionCreation` | `Double` (calculée) | avancement de l'exécution en cours ou de la dernière, de 0 à 1, pour la barre de chargement : étapes faites sur étapes attendues pour la tâche, relevé par les étapes repères d'une création (« J'écris le post » 0,55, mise en page 0,7, contrôle 0,8, aperçu 0,9) ; plafonné à 0,96 tant que Claude travaille, 1 une fois réussie ; ne recule jamais. Texte à côté : `execution?.etapeCourante?.texte` |
+| `ajoutSourceEnCours`, `exportEnCours` | `Bool` | `ajouterSource` (copie et lecture des photos ; plus long pour un lien Pic-Time), `exporter` |
 | `versionImages` | `Int` | augmente quand les images du post sont refaites (mêmes chemins, nouveau contenu) : `.id(etat.versionImages)` sur une image du post force sa relecture |
 | `etapesAValider` | `[String]` (calculée) | étapes de l'assistant que la photographe valide (`photos`, `legende`, `musique`, dans cet ordre ; toutes sans réglage) ; `doitValider(_:)`. L'aperçu se valide toujours |
 | `mediasDuPost` | `[MediaModifie]?` (calculée) | photos actuelles du post, dans l'ordre, prêtes à être retirées, ajoutées ou réordonnées ; nil si le moteur ne donne pas leurs `photo_id` |
@@ -212,6 +214,13 @@ Assistant de création (écran `creation`) :
 - `candidats(serie: String) -> [PhotoCandidate]` : photos de la galerie à proposer, les mieux notées d'abord (60 au plus).
 - `chercherMusique(_ requete: String) -> [PisteMusique]` : bibliothèque musicale d'Instagram (route Facebook) ; choisir une piste : `modifierPost(musique: piste.musique())`.
 
+Flux de l'accueil (`conception/flux-unique.md` : idées → photos → génération → aperçu → finaliser) :
+- Idées : `vue.idees` (cartes : `couverture` et `briefAffiche`, le `brief` d'une phrase du moteur) ; choisir → `decider("choix", "\(numero)")` ; son propre brief → `decider("libre", texte)` ; « D'autres idées » → `lancerClaude(.idees)`.
+- `ajouterSource(fichiers: [URL], nom: String? = nil) -> String?`, `ajouterSource(dossier: URL, nom:) -> String?`, `ajouterSource(pictime: String, nom:) -> String?` : `./studio app ajouter-source` (fichiers copiés dans le studio, jamais modifiés ; dossier lu sur place ; lien Pic-Time lu). Rend l'identifiant de la série créée (« post-… »), puis `lancerClaude(.creation, serie: id)` : Claude utilise ces photos (et les analyse d'abord s'il le faut). Nil avec `erreur` sinon. « Utiliser les photos de l'idée » : `lancerClaude(.creation, serie: idee.serie)`.
+- Génération : barre `progressionCreation` + `execution?.etapeCourante?.texte` ; l'app peut être fermée, elle se rouvre quand c'est prêt.
+- Aperçu : `vue.post` ; « Dis à Claude ce qu'il faut changer… » → `decider("retouche", texte)` (lance `.retouche`).
+- `exporter(jour: String? = nil) -> URL?` : copie images (ou Reel), `legende.txt` et `textes-alternatifs.txt` dans `~/Downloads/Studio Instagram/<jour> <titre>` (l'app passe ce dossier au moteur : `./studio app exporter <jour> <dossier>`), puis l'ouvre dans le Finder ; nil avec `erreur` si le post n'est pas prêt. Publier : `decider("approuver", "maintenant")` après confirmation.
+
 Instagram (onboarding « Connexions », Réglages) :
 - `chargerInstagram(silencieux: Bool = false)` : `./studio app instagram` → `instagram` (interroge Instagram : une à deux secondes ; à appeler à l'apparition de l'écran qui l'affiche).
 - `connecterInstagram(route: String, appId: String = "", secret: String = "", jeton: String) -> Bool` : route `facebook` (identifiant de l'app, clé secrète, jeton) ou `instagram` (jeton seul). Les identifiants passent par un fichier créé en 0600 que le moteur efface dès sa lecture (`enregistrer-instagram`) ; jamais sur la ligne de commande, dans un message ou un journal. Réussite : `message`, `instagram` rechargé ; sinon `erreur` (champs manquants, ou refus d'Instagram).
@@ -238,6 +247,8 @@ Les types 2.0 se décodent toujours : une clé absente, `null` ou d'un type inat
 - `PisteMusique` : `audio_id`, `titre`, `artiste`, `duree_s`, `apercu_url`, `lien_instagram`, `pochette` ; `musique(volumeVideo:)`.
 - `InstagramEtat` : `etat` (`valide|absent|invalide`), `route`, `compte`, `abonnes`, `expire_le`, `erreur` ; `connecte`, `absent`, `libelle` (« Connecté à @atelier · 1 240 abonnés »), `joursRestants`. `IdentifiantsInstagram`, `ReponseInstagram` : internes à `EtatApp`.
 - `ListeSouple<T>` : liste JSON dont les éléments illisibles sont ignorés.
+- `Idee.brief` (une phrase, facultatif) et `briefAffiche` (`brief`, sinon `pitch`, sinon `titre`).
+- `SourcePhotos` (`type` : `fichiers|dossier|pictime`, `fichiers`, `chemin`, `url`, `nom`), `ReponseSource` (`etat` : `ajoutee|refuse|echec`, `id`, `photos`, `erreurs`), `ReponseExport` (`etat`, `dossier`, `fichiers`) : internes à `EtatApp`.
 - `champACompleter(_ valeur: String?) -> Bool` (fonction libre) : vrai si la valeur est vide ou contient « [À COMPLÉTER » (modèle vierge de `config/compte.yaml`).
 - `appeler(_:_:)` demande un type `Decodable & Sendable` (une structure de valeurs l'est d'office).
 - `InvitationClaude` : `action` (`.installer|.connecter`), `texte`, `libelleBouton`, `symbole`.

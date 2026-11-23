@@ -445,9 +445,14 @@ def _prompt(e: dict) -> str:
     if t == "matin":
         return "/studio-instagram:studio-matin\n\nJour : " + j + "."
     if t == "creation":
+        serie = ""
+        if e.get("serie"):
+            serie = (" Utilise les photos de la série « " + e["serie"] + " » (choisies par la photographe pour ce "
+                     "post, à la place de la série de l'idée). Si elles ne sont pas encore analysées, fais d'abord "
+                     "l'analyse visuelle (./studio planches, regarde les planches, ./studio noter), puis construis.")
         return ("/studio-instagram:studio-creation\n\nJour : " + j + ". L'idée choisie par la photographe est "
-                "enregistrée dans jours/" + j + "/idees.json (champ « choix »). Construis le post complet, "
-                "contrôle-le et fabrique l'aperçu.")
+                "enregistrée dans jours/" + j + "/idees.json (champ « choix »)." + serie + " Construis le post "
+                "complet, contrôle-le et fabrique l'aperçu.")
     if t == "retouche":
         return ("/studio-instagram:studio-creation\n\nJour : " + j + ". Retouche demandée par la photographe sur "
                 "le post du jour : « " + e["consigne"] + " ». Applique exactement cette demande sans tout refaire "
